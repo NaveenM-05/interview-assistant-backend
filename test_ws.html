@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Live Extraction Test</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        #inputBox { width: 400px; padding: 8px; }
+        button { padding: 8px 16px; }
+        ul { list-style: none; padding: 0; }
+        li { margin-bottom: 12px; padding: 8px; border-radius: 4px; }
+        .user { background: #f0f0f0; }
+        .ai { background: #e8f4fd; }
+        pre { background: #272822; color: #f8f8f2; padding: 8px; border-radius: 4px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h2>DSA Voice Transcript Extraction Test</h2>
+    <input type="text" id="inputBox" value="I would use a Hash Map to store complements and achieve O(N) time with O(N) space." />
+    <button onclick="sendMessage()">Send Transcript</button>
+    <ul id="messages"></ul>
+
+    <script>
+        var ws = new WebSocket("ws://127.0.0.1:8000/ws/interview/test-session-123");
+
+        ws.onmessage = function(event) {
+            var data = JSON.parse(event.data);
+            var messages = document.getElementById('messages');
+            var li = document.createElement('li');
+            li.className = 'ai';
+            li.innerHTML = `
+                <b>System Response:</b> ${data.barge_in_prompt}<br>
+                <b>Extracted Schema:</b>
+                <pre>${JSON.stringify(data.raw_extraction, null, 2)}</pre>
+                <small><b>T_LLM:</b> ${data.metrics.T_LLM_ms} ms | <b>Total Cloud Latency:</b> ${data.metrics.Total_Cloud_Latency_ms} ms</small>
+            `;
+            messages.appendChild(li);
+        };
+
+        function sendMessage() {
+            var input = document.getElementById('inputBox');
+            var text = input.value.trim();
+            if (!text) return;
+            ws.send(text);
+
+            var messages = document.getElementById('messages');
+            var li = document.createElement('li');
+            li.className = 'user';
+            li.innerHTML = `<b>Candidate:</b> ${text}`;
+            messages.appendChild(li);
+        }
+    </script>
+</body>
+</html>
