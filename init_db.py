@@ -13,6 +13,7 @@ def init_db():
         print("Inserting mock DSA question...")
         dsa_problem = ProblemRubric(
             category="DSA",
+            skill="Two Sum",
             question_text="Given an array of integers, return indices of the two numbers such that they add up to a specific target.",
             optimal_paradigm="Hash Map",
             optimal_time_complexity="O(N)",

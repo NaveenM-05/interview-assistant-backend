@@ -40,7 +40,10 @@
             var input = document.getElementById('inputBox');
             var text = input.value.trim();
             if (!text) return;
-            ws.send(text);
+            ws.send(JSON.stringify({
+    skill: "Two Sum",
+    transcript: text
+}));
 
             var messages = document.getElementById('messages');
             var li = document.createElement('li');
