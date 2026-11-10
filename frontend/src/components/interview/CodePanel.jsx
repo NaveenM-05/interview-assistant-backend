@@ -1,6 +1,9 @@
+import { useCallback, useEffect, useRef } from 'react';
 import { DiffEditor, Editor } from '@monaco-editor/react';
 import { ArrowLeft, Code2, GitCompareArrows, Loader2 } from 'lucide-react';
 import { NAVY_THEME, defineNavyTheme } from '../../lib/monacoTheme';
+
+const DEBOUNCE_MS = 300;
 
 const loading = (
   <div className="grid h-full place-items-center text-sm text-mute">
@@ -11,8 +14,53 @@ const loading = (
   </div>
 );
 
-export default function CodePanel({ code, onChange, optimalCode, onBackToEditor }) {
+export default function CodePanel({ code, codeRef: externalCodeRef, onChange, optimalCode, onBackToEditor }) {
   const showingDiff = Boolean(optimalCode);
+  const internalCodeRef = useRef(code);
+  const activeCodeRef = externalCodeRef || internalCodeRef;
+  const editorRef = useRef(null);
+  const diffEditorRef = useRef(null);
+  const debounceTimerRef = useRef(null);
+
+  // Keep ref synced if initial/external code prop changes
+  useEffect(() => {
+    activeCodeRef.current = code;
+  }, [code, activeCodeRef]);
+
+  // Debounce React state updates (300ms) while keeping activeCodeRef immediate
+  const handleEditorChange = useCallback(
+    (val) => {
+      const nextValue = val ?? '';
+      activeCodeRef.current = nextValue;
+
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      debounceTimerRef.current = setTimeout(() => {
+        onChange?.(nextValue);
+      }, DEBOUNCE_MS);
+    },
+    [activeCodeRef, onChange],
+  );
+
+  // Dispose active Monaco Editor / DiffEditor instances when toggling diff mode or unmounting
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      if (editorRef.current) {
+        editorRef.current.dispose();
+        editorRef.current = null;
+      }
+      if (diffEditorRef.current) {
+        diffEditorRef.current.dispose();
+        diffEditorRef.current = null;
+      }
+    };
+  }, [showingDiff]);
+
   return (
     <section aria-label="Code editor" className="glass flex min-h-0 flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3.5">
@@ -49,7 +97,10 @@ export default function CodePanel({ code, onChange, optimalCode, onBackToEditor 
             language="python"
             theme={NAVY_THEME}
             beforeMount={defineNavyTheme}
-            original={code}
+            onMount={(editor) => {
+              diffEditorRef.current = editor;
+            }}
+            original={activeCodeRef.current}
             modified={optimalCode}
             loading={loading}
             options={{
@@ -68,8 +119,11 @@ export default function CodePanel({ code, onChange, optimalCode, onBackToEditor 
             language="python"
             theme={NAVY_THEME}
             beforeMount={defineNavyTheme}
-            value={code}
-            onChange={(val) => onChange(val ?? '')}
+            onMount={(editor) => {
+              editorRef.current = editor;
+            }}
+            defaultValue={activeCodeRef.current}
+            onChange={handleEditorChange}
             loading={loading}
             options={{
               minimap: { enabled: false },

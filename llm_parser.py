@@ -1,4 +1,5 @@
 # llm_parser.py
+import asyncio
 import os
 import json
 from dotenv import load_dotenv
@@ -9,8 +10,8 @@ load_dotenv()
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-PRO_MODELS = ["gemini-3.1-pro-preview", "gemini-3.8-flash"]
-FAST_MODELS = ["gemini-3.8-flash", "gemini-3.1-pro-preview"]
+PRO_MODELS = ["gemini-3.1-pro-preview", "gemini-2.5-flash"]
+FAST_MODELS = ["gemini-3.1-pro-preview", "gemini-2.5-flash"]
 
 
 def _generate_json(prompt: str, models_list=None) -> dict:
@@ -30,6 +31,33 @@ def _generate_json(prompt: str, models_list=None) -> dict:
             last_error = e
             print(f"Model {model_name} failed: {e}")
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
+
+
+async def _stream_text(prompt: str, models_list=None):
+    """
+    Async generator that streams plain text chunks from Gemini using
+    native async client.aio.models.generate_content_stream.
+    """
+    models_to_try = models_list or PRO_MODELS
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            stream = await client.aio.models.generate_content_stream(
+                model=model_name,
+                contents=prompt,
+            )
+            yielded_any = False
+            async for chunk in stream:
+                text = getattr(chunk, "text", None)
+                if text:
+                    yielded_any = True
+                    yield text
+            if yielded_any:
+                return
+        except Exception as e:
+            last_error = e
+            print(f"Streaming model {model_name} failed: {e}")
+    raise RuntimeError(f"All Gemini streaming models failed. Last error: {last_error}")
 
 
 def generate_interview_question(
@@ -415,6 +443,388 @@ def generate_teacher_evaluation(
             "teacher_feedback": (
                 "Session concluded. Review the optimal solution and code diff."
             ),
+            "optimal_code_snippet": (
+                f"# Optimal {optimal_paradigm} Solution\n"
+                f"# Time Complexity: {optimal_time} | Space Complexity: {optimal_space}\n"
+                "def solve(data):\n"
+                "    # Implement optimal approach here\n"
+                "    pass\n"
+            ),
+        }
+
+
+# ============================================================
+# STREAMING + PARALLEL METRICS EXTRACTION HELPERS
+# ============================================================
+
+
+async def stream_interviewer_turn(
+    question_text: str,
+    optimal_paradigm: str,
+    optimal_time: str,
+    optimal_space: str,
+    chat_history: list,
+    latest_transcript: str,
+    code: str = "",
+):
+    """
+    Streams only the conversational interviewer response in plain text
+    using gemini-3.1-pro-preview so tokens appear in the UI immediately.
+    """
+    if (optimal_paradigm or "").strip().upper() == "BEHAVIORAL":
+        prompt = f"""
+        You are a strict behavioral interviewer conducting a multi-turn software engineering interview using the STAR method.
+
+        Behavioral Question:
+        "{question_text}"
+
+        Past Conversation History:
+        {json.dumps(chat_history, indent=2)}
+
+        Candidate's Latest Response:
+        "{latest_transcript}"
+
+        Instructions:
+        Evaluate the candidate's cumulative responses so far for the 4 STAR components (Situation, Task, Action, Result).
+        - If ANY of S, T, A, or R are missing or vague, respond directly to the candidate with a concise, probing follow-up question asking specifically for the missing component.
+        - If all 4 STAR components have been clearly provided, acknowledge their complete STAR story and invite them to click "Finalize and evaluate".
+        Respond ONLY with your plain-text spoken interviewer reply (no JSON, no markdown code blocks).
+        """
+    else:
+        prompt = f"""
+        You are a strict technical software engineering interviewer conducting a multi-turn DSA interview.
+
+        Interview Question:
+        "{question_text}"
+
+        Target Optimal Rubric (DO NOT reveal these directly to the candidate):
+        - Optimal Paradigm: {optimal_paradigm}
+        - Optimal Time Complexity: {optimal_time}
+        - Optimal Space Complexity: {optimal_space}
+
+        Past Conversation History:
+        {json.dumps(chat_history, indent=2)}
+
+        Candidate's Latest Spoken/Typed Response:
+        "{latest_transcript}"
+
+        Candidate's Current Code in Editor:
+        ```
+        {code}
+        ```
+
+        Instructions:
+        1. Analyze the candidate's explanation and code for syntax errors, logical bugs, or deviations from the optimal approach ({optimal_paradigm}, {optimal_time} time, {optimal_space} space).
+        2. If you detect bugs, inefficiencies, or missing complexity analysis, ask a concise, probing interviewer question to guide them without giving away the answer.
+        3. If both their explanation and code are optimal and bug-free, acknowledge their solution and invite them to click "Finalize and evaluate".
+        Respond ONLY with your plain-text spoken interviewer reply (no JSON, no markdown code blocks).
+        """
+
+    try:
+        async for chunk in _stream_text(prompt, models_list=PRO_MODELS):
+            yield chunk
+    except Exception as e:
+        print(f"Streaming interviewer turn failed, yielding fallback: {e}")
+        if (optimal_paradigm or "").strip().upper() == "BEHAVIORAL":
+            yield "Could you elaborate on the specific actions you took and the measurable result?"
+        else:
+            yield "Can you walk me through your code and clarify its time and space complexity?"
+
+
+async def extract_interviewer_metrics(
+    question_text: str,
+    optimal_paradigm: str,
+    optimal_time: str,
+    optimal_space: str,
+    chat_history: list,
+    latest_transcript: str,
+    code: str = "",
+) -> dict:
+    """
+    Natively async metric extractor using client.aio.models.generate_content
+    with a 15-second fallback timeout.
+    """
+    if (optimal_paradigm or "").strip().upper() == "BEHAVIORAL":
+        prompt = f"""
+        Evaluate the candidate's cumulative behavioral interview responses across the conversation so far for the 4 STAR components:
+        - S (Situation)
+        - T (Task)
+        - A (Action)
+        - R (Result)
+
+        Behavioral Question: "{question_text}"
+        Past Conversation History: {json.dumps(chat_history, indent=2)}
+        Candidate's Latest Response: "{latest_transcript}"
+
+        Return ONLY a raw JSON object with this exact schema:
+        {{
+            "score": 75,
+            "paradigm": "STAR Method",
+            "time_complexity": "N/A",
+            "space_complexity": "N/A",
+            "S": true,
+            "T": true,
+            "A": true,
+            "R": false
+        }}
+        """
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model="gemini-3.1-pro-preview",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    ),
+                ),
+                timeout=15.0,
+            )
+            data = json.loads(response.text)
+            data["algorithmic_paradigm"] = data.get("paradigm", "STAR Method")
+            return data
+        except Exception as e:
+            print(f"Failed or timed out extracting behavioral turn metrics: {e}")
+            return {
+                "score": 0,
+                "paradigm": "STAR Method",
+                "algorithmic_paradigm": "STAR Method",
+                "time_complexity": "N/A",
+                "space_complexity": "N/A",
+                "S": False,
+                "T": False,
+                "A": False,
+                "R": False,
+            }
+
+    prompt = f"""
+    Analyze the candidate's cumulative explanation and code so far against the target optimal rubric.
+    Infer the candidate's algorithmic paradigm, time complexity, and space complexity from BOTH their spoken/typed explanation AND their actual code implementation (even if they did not explicitly state Big-O notation in prose).
+
+    Interview Question: "{question_text}"
+    Target Optimal Rubric:
+    - Optimal Paradigm: {optimal_paradigm}
+    - Optimal Time Complexity: {optimal_time}
+    - Optimal Space Complexity: {optimal_space}
+
+    Past Conversation History: {json.dumps(chat_history, indent=2)}
+    Candidate's Latest Response: "{latest_transcript}"
+    Candidate's Code:
+    ```
+    {code}
+    ```
+
+    Return ONLY a raw JSON object with the exact keys:
+    - "score": integer from 0 to 100 grading how close the candidate's explanation and code are to the optimal solution
+    - "time_complexity": string (e.g., "O(N)", "O(N log N)", "O(N^2)")
+    - "space_complexity": string (e.g., "O(1)", "O(N)")
+    - "paradigm": string (e.g., "{optimal_paradigm}", "Brute Force", "Two Pointers", "Hash Map", "Dynamic Programming")
+
+    Exact JSON Schema:
+    {{
+        "score": 85,
+        "time_complexity": "O(N)",
+        "space_complexity": "O(N)",
+        "paradigm": "{optimal_paradigm}"
+    }}
+    """
+    try:
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model="gemini-3.1-pro-preview",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                ),
+            ),
+            timeout=15.0,
+        )
+        data = json.loads(response.text)
+        paradigm_val = (
+            data.get("paradigm")
+            or data.get("algorithmic_paradigm")
+            or "None"
+        )
+        data["paradigm"] = paradigm_val
+        data["algorithmic_paradigm"] = paradigm_val
+        return data
+    except Exception as e:
+        print(f"Failed or timed out extracting DSA turn metrics: {e}")
+        return {
+            "score": 0,
+            "paradigm": "None",
+            "algorithmic_paradigm": "None",
+            "time_complexity": "None",
+            "space_complexity": "None",
+        }
+
+
+async def stream_teacher_evaluation(
+    question_text: str,
+    optimal_paradigm: str,
+    optimal_time: str,
+    optimal_space: str,
+    optimal_solution_text: str,
+    chat_history: list,
+    code: str = "",
+):
+    """
+    Streams the Teacher's constructive feedback in plain text using gemini-3.1-pro-preview.
+    """
+    if (optimal_paradigm or "").strip().upper() == "BEHAVIORAL":
+        prompt = f"""
+        You are an expert Engineering Leadership Coach & Teacher evaluating a candidate's behavioral interview session using the STAR framework.
+
+        Behavioral Question: "{question_text}"
+        Reference STAR Guide: "{optimal_solution_text}"
+        Full Interview Transcript History: {json.dumps(chat_history, indent=2)}
+
+        Provide constructive, encouraging plain-text teacher feedback highlighting which STAR components (Situation, Task, Action, Result) were strong, which were missing or could be sharpened, and how to make their story more impactful.
+        Respond ONLY with plain text (no JSON).
+        """
+    else:
+        prompt = f"""
+        You are an expert Computer Science Teacher evaluating a candidate's multi-turn DSA interview session and code.
+
+        Problem: "{question_text}"
+        Optimal Paradigm: {optimal_paradigm} | Optimal Time: {optimal_time} | Optimal Space: {optimal_space}
+        Optimal Solution Reference: "{optimal_solution_text}"
+        Full Interview Transcript History: {json.dumps(chat_history, indent=2)}
+        Candidate's Final Code:
+        ```
+        {code}
+        ```
+
+        Provide constructive plain-text teacher feedback summarizing what the candidate did well, any bugs or inefficiencies in their code, and how the optimal solution achieves {optimal_time} time and {optimal_space} space.
+        Respond ONLY with plain text (no JSON).
+        """
+
+    try:
+        async for chunk in _stream_text(prompt, models_list=PRO_MODELS):
+            yield chunk
+    except Exception as e:
+        print(f"Streaming teacher feedback failed, yielding fallback: {e}")
+        if (optimal_paradigm or "").strip().upper() == "BEHAVIORAL":
+            yield "Behavioral session concluded. Review the reference STAR breakdown below."
+        else:
+            yield "Session concluded. Review the optimal solution and code diff."
+
+
+async def extract_teacher_metrics(
+    question_text: str,
+    optimal_paradigm: str,
+    optimal_time: str,
+    optimal_space: str,
+    optimal_solution_text: str,
+    chat_history: list,
+    code: str = "",
+) -> dict:
+    """
+    Natively async Teacher metric extractor using client.aio.models.generate_content
+    with a 15-second fallback timeout.
+    """
+    if (optimal_paradigm or "").strip().upper() == "BEHAVIORAL":
+        prompt = f"""
+        Determine whether the candidate's cumulative responses across the conversation covered each STAR component (S, T, A, R) and assign a final score from 0 to 100.
+
+        Behavioral Question: "{question_text}"
+        Full Interview Transcript History: {json.dumps(chat_history, indent=2)}
+
+        Return ONLY a raw JSON object with this exact schema:
+        {{
+            "score": 100,
+            "paradigm": "STAR Method",
+            "time_complexity": "N/A",
+            "space_complexity": "N/A",
+            "S": true,
+            "T": true,
+            "A": true,
+            "R": true
+        }}
+        """
+        try:
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model="gemini-3.1-pro-preview",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    ),
+                ),
+                timeout=15.0,
+            )
+            data = json.loads(response.text)
+            data["algorithmic_paradigm"] = data.get("paradigm", "STAR Method")
+            return data
+        except Exception as e:
+            print(f"Failed or timed out extracting behavioral teacher metrics: {e}")
+            return {"score": 0, "S": False, "T": False, "A": False, "R": False}
+
+    prompt = f"""
+    Evaluate the candidate's final DSA interview session and code against the optimal rubric.
+    Infer the candidate's algorithmic paradigm, time complexity, and space complexity from BOTH their conversation and their final code.
+
+    Problem: "{question_text}"
+    Optimal Paradigm: {optimal_paradigm} | Optimal Time: {optimal_time} | Optimal Space: {optimal_space}
+    Optimal Solution Reference: {optimal_solution_text}
+    Full Interview Transcript History: {json.dumps(chat_history, indent=2)}
+    Candidate's Final Code:
+    ```
+    {code}
+    ```
+
+    Return ONLY a raw JSON object with the exact required keys:
+    - "score" (integer 0-100)
+    - "time_complexity" (string)
+    - "space_complexity" (string)
+    - "paradigm" (string)
+    - "paradigm_correct" (boolean)
+    - "time_complexity_correct" (boolean)
+    - "space_complexity_correct" (boolean)
+    - "optimal_code_snippet" (string: clean, complete, well-commented Python solution)
+
+    Exact JSON Schema:
+    {{
+        "score": 90,
+        "time_complexity": "O(N)",
+        "space_complexity": "O(N)",
+        "paradigm": "{optimal_paradigm}",
+        "paradigm_correct": true,
+        "time_complexity_correct": true,
+        "space_complexity_correct": true,
+        "optimal_code_snippet": "string (clean, complete, well-commented Python solution)"
+    }}
+    """
+    try:
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model="gemini-3.1-pro-preview",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                ),
+            ),
+            timeout=15.0,
+        )
+        data = json.loads(response.text)
+        paradigm_val = (
+            data.get("paradigm")
+            or data.get("algorithmic_paradigm")
+            or "None"
+        )
+        data["paradigm"] = paradigm_val
+        data["algorithmic_paradigm"] = paradigm_val
+        return data
+    except Exception as e:
+        print(f"Failed or timed out extracting DSA teacher metrics: {e}")
+        return {
+            "score": 0,
+            "paradigm": "None",
+            "algorithmic_paradigm": "None",
+            "time_complexity": "None",
+            "space_complexity": "None",
+            "paradigm_correct": False,
+            "time_complexity_correct": False,
+            "space_complexity_correct": False,
             "optimal_code_snippet": (
                 f"# Optimal {optimal_paradigm} Solution\n"
                 f"# Time Complexity: {optimal_time} | Space Complexity: {optimal_space}\n"

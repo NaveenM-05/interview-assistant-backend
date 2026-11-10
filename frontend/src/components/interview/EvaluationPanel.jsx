@@ -1,8 +1,11 @@
 import { BookOpenCheck, CheckCircle2, LayoutDashboard, MessageSquareQuote, XCircle } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { STAR_PARTS, toPercent } from '../../lib/topics';
 import Button from '../ui/Button';
 import ScoreRing from '../ui/ScoreRing';
+import { markdownComponents } from './MessageBubble';
 
 export default function EvaluationPanel({ evaluation, isBehavioral, topic }) {
   const reduce = useReducedMotion();
@@ -57,7 +60,11 @@ export default function EvaluationPanel({ evaluation, isBehavioral, topic }) {
               <MessageSquareQuote size={16} aria-hidden="true" />
               Teacher feedback
             </h3>
-            <p className="text-sm leading-relaxed text-ink">{teacherFeedback}</p>
+            <div className="text-sm leading-relaxed text-ink">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                {teacherFeedback}
+              </ReactMarkdown>
+            </div>
           </div>
         )}
 
@@ -82,7 +89,11 @@ export default function EvaluationPanel({ evaluation, isBehavioral, topic }) {
                   ))}
               </div>
             )}
-            <p className="whitespace-pre-line text-sm leading-relaxed text-ink">{optimalSolutionText}</p>
+            <div className="text-sm leading-relaxed text-ink">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                {optimalSolutionText}
+              </ReactMarkdown>
+            </div>
           </div>
         )}
       </div>

@@ -1,6 +1,40 @@
 import { AlertTriangle, GraduationCap, Sparkles } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { STAR_PARTS, toPercent } from '../../lib/topics';
+
+export const markdownComponents = {
+  p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+  em: ({ children }) => <em className="italic text-soft">{children}</em>,
+  ul: ({ children }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  code: ({ className, children, ...props }) => {
+    const isBlock = Boolean(className);
+    if (isBlock) {
+      return (
+        <code className={`${className || ''} font-mono text-xs text-soft`} {...props}>
+          {children}
+        </code>
+      );
+    }
+    return (
+      <code
+        className="rounded-md border border-white/10 bg-white/[0.08] px-1.5 py-0.5 font-mono text-xs text-cyan"
+        {...props}
+      >
+        {children}
+      </code>
+    );
+  },
+  pre: ({ children }) => (
+    <pre className="my-2 overflow-x-auto rounded-xl border border-line bg-void/80 p-3 font-mono text-xs text-soft">
+      {children}
+    </pre>
+  ),
+};
 
 function StarChips({ validation }) {
   return (
@@ -26,7 +60,7 @@ function StarChips({ validation }) {
 
 function ComplexityChips({ extraction }) {
   const items = [
-    ['Paradigm', extraction.algorithmic_paradigm],
+    ['Paradigm', extraction.paradigm || extraction.algorithmic_paradigm],
     ['Time', extraction.time_complexity],
     ['Space', extraction.space_complexity],
   ].filter(([, v]) => v);
@@ -94,17 +128,31 @@ export default function MessageBubble({ msg, isBehavioral }) {
           <p className="text-sm text-rose-200">{msg.error}</p>
         ) : (
           <div className="space-y-2.5">
-            {msg.bargeInPrompt && <p className="text-sm leading-relaxed text-ink">{msg.bargeInPrompt}</p>}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-md bg-electric/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-cyan">
-                Score {pct === null ? 'N/A' : `${pct}%`}
-              </span>
-              {showStar ? (
-                <StarChips validation={msg.validation} />
-              ) : (
-                msg.rawExtraction && <ComplexityChips extraction={msg.rawExtraction} />
-              )}
-            </div>
+            {msg.bargeInPrompt && (
+              <div className="text-sm leading-relaxed text-ink">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                  {msg.bargeInPrompt}
+                </ReactMarkdown>
+                {msg.isStreaming && (
+                  <span
+                    className="ml-1 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-cyan align-middle"
+                    aria-hidden="true"
+                  />
+                )}
+              </div>
+            )}
+            {!msg.isStreaming && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-electric/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-cyan">
+                  Score {pct === null ? 'N/A' : `${pct}%`}
+                </span>
+                {showStar ? (
+                  <StarChips validation={msg.validation} />
+                ) : (
+                  msg.rawExtraction && <ComplexityChips extraction={msg.rawExtraction} />
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

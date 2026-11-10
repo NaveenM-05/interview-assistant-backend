@@ -56,6 +56,7 @@ export function useInterviewSocket(sessionId, { onSpeak } = {}) {
   const [isAwaitingReply, setIsAwaitingReply] = useState(false);
   const wsRef = useRef(null);
   const speakRef = useRef(onSpeak);
+  const isFinalizingRef = useRef(false);
 
   useEffect(() => {
     speakRef.current = onSpeak;
@@ -63,6 +64,16 @@ export function useInterviewSocket(sessionId, { onSpeak } = {}) {
 
   useEffect(() => {
     if (!sessionId) return undefined;
+
+    // Close any prior ghost socket before opening a new one (e.g. on HMR / remount)
+    if (wsRef.current) {
+      wsRef.current.onopen = null;
+      wsRef.current.onerror = null;
+      wsRef.current.onclose = null;
+      wsRef.current.onmessage = null;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
 
     const ws = new WebSocket(`${WS_URL}/ws/interview/${sessionId}`);
     wsRef.current = ws;
@@ -73,20 +84,58 @@ export function useInterviewSocket(sessionId, { onSpeak } = {}) {
       setStatus('Disconnected');
       setIsAwaitingReply(false);
       setIsFinalizing(false);
+      isFinalizingRef.current = false;
     };
     ws.onmessage = (event) => {
-      setIsFinalizing(false);
-      setIsAwaitingReply(false);
       let data;
       try {
         data = JSON.parse(event.data);
       } catch (err) {
         console.error('Failed to parse WebSocket message:', err);
+        setIsFinalizing(false);
+        setIsAwaitingReply(false);
+        isFinalizingRef.current = false;
         return;
       }
 
+      // Handle real-time streaming text chunks
+      if (data.type === 'chunk') {
+        const chunkText = data.text || '';
+        if (!chunkText) return;
+        setIsAwaitingReply(false);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.isStreaming) {
+            return [
+              ...prev.slice(0, -1),
+              {
+                ...last,
+                bargeInPrompt: `${last.bargeInPrompt || ''}${chunkText}`,
+              },
+            ];
+          }
+          return [
+            ...prev,
+            {
+              role: isFinalizingRef.current ? 'teacher' : 'ai',
+              bargeInPrompt: chunkText,
+              isStreaming: true,
+              timestamp: now(),
+            },
+          ];
+        });
+        return;
+      }
+
+      setIsFinalizing(false);
+      setIsAwaitingReply(false);
+      isFinalizingRef.current = false;
+
       if (data.error) {
-        setMessages((prev) => [...prev, { role: 'ai', error: data.error, timestamp: now() }]);
+        setMessages((prev) => {
+          const base = prev[prev.length - 1]?.isStreaming ? prev.slice(0, -1) : prev;
+          return [...base, { role: 'ai', error: data.error, timestamp: now() }];
+        });
         return;
       }
 
@@ -94,10 +143,32 @@ export function useInterviewSocket(sessionId, { onSpeak } = {}) {
       if (parsed.spokenText) speakRef.current?.(parsed.spokenText);
       if (parsed.optimalCode) setOptimalCode(parsed.optimalCode);
       if (parsed.evaluation) setEvaluation(parsed.evaluation);
-      setMessages((prev) => [...prev, parsed.message]);
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.isStreaming) {
+          return [
+            ...prev.slice(0, -1),
+            {
+              ...parsed.message,
+              bargeInPrompt: parsed.message.bargeInPrompt || last.bargeInPrompt,
+              isStreaming: false,
+            },
+          ];
+        }
+        return [...prev, parsed.message];
+      });
     };
 
-    return () => ws.close();
+    return () => {
+      ws.onopen = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      ws.onmessage = null;
+      ws.close();
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
+    };
   }, [sessionId]);
 
   const isOpen = () => wsRef.current?.readyState === WebSocket.OPEN;
@@ -116,8 +187,13 @@ export function useInterviewSocket(sessionId, { onSpeak } = {}) {
 
   const finalize = useCallback(
     (payload) => {
+      isFinalizingRef.current = true;
       const err = send({ action: 'evaluate_final', ...payload });
-      if (!err) setIsFinalizing(true);
+      if (!err) {
+        setIsFinalizing(true);
+      } else {
+        isFinalizingRef.current = false;
+      }
       return err;
     },
     [send],

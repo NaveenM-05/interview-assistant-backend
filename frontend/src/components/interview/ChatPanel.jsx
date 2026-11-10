@@ -44,7 +44,7 @@ export default function ChatPanel({
   useEffect(() => {
     const list = listRef.current;
     if (list) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
-  }, [messages.length, isFinalizing, isAwaitingReply]);
+  }, [messages, isFinalizing, isAwaitingReply]);
 
   return (
     <section aria-label="Interview conversation" className="glass flex min-h-0 flex-col overflow-hidden">

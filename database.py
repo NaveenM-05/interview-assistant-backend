@@ -6,11 +6,19 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 load_dotenv()
 
-# Replace the hardcoded password with the environment variable
-db_pass = os.getenv("DB_PASSWORD")
-DATABASE_URL = f"postgresql://postgres:{db_pass}@localhost:5432/interview_db"
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    connect_args={
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    },
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()

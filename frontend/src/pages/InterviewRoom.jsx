@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import ChatPanel from '../components/interview/ChatPanel';
 import CodePanel from '../components/interview/CodePanel';
@@ -28,6 +28,7 @@ function Room({ session }) {
   const socket = useInterviewSocket(session.sessionId, { onSpeak: voice.speak });
   const speech = useSpeechInput();
   const [code, setCode] = useState(session.code);
+  const codeRef = useRef(session.code);
   const [sendError, setSendError] = useState(null);
 
   const error = sendError || speech.error;
@@ -43,14 +44,15 @@ function Room({ session }) {
 
   const sendAnswer = () => {
     const trimmed = speech.transcript.trim();
-    if (!trimmed && (isBehavioral || !code.trim())) return;
+    const currentCode = codeRef.current ?? code;
+    if (!trimmed && (isBehavioral || !currentCode.trim())) return;
     stopMic();
 
     const err = socket.send({
       interview_type: interviewType,
       topic,
       transcript: trimmed,
-      code: isBehavioral ? '' : code,
+      code: isBehavioral ? '' : currentCode,
       user_id: USER_ID,
     });
     if (err) {
@@ -65,10 +67,11 @@ function Room({ session }) {
   const finalize = () => {
     stopMic();
     const raw = speech.transcript;
+    const currentCode = codeRef.current ?? code;
     const err = socket.finalize({
       interview_type: interviewType,
       transcript: raw,
-      code: isBehavioral ? '' : code,
+      code: isBehavioral ? '' : currentCode,
       user_id: USER_ID,
     });
     if (err) {
@@ -117,6 +120,7 @@ function Room({ session }) {
           {!isBehavioral && (
             <CodePanel
               code={code}
+              codeRef={codeRef}
               onChange={setCode}
               optimalCode={socket.optimalCode}
               onBackToEditor={socket.clearOptimalCode}

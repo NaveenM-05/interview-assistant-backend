@@ -2,12 +2,51 @@ def _normalize(val: str) -> str:
     return (val or "").strip().lower()
 
 
+VALID_DSA_TOPICS = [
+    "Arrays & Hashing",
+    "Strings",
+    "Two Pointers",
+    "Sliding Window",
+    "Stack",
+    "Queues",
+    "Binary Search",
+    "Linked Lists",
+    "Trees (including BSTs)",
+    "Tries",
+    "Heaps / Priority Queues",
+    "Backtracking",
+    "Graphs (BFS/DFS)",
+    "Advanced Graphs (Union-Find, Dijkstra, Topological Sort)",
+    "1D Dynamic Programming",
+    "2D Dynamic Programming",
+    "Greedy",
+    "Bit Manipulation",
+    "Math & Geometry",
+]
+
+VALID_BEHAVIORAL_TOPICS = [
+    "Leadership",
+    "Conflict Resolution",
+    "Time Management",
+    "Adaptability",
+    "Cross-Team Collaboration",
+    "Handling Failure",
+]
+
 STAR_LABELS = {
     "S": "Situation (context and background)",
     "T": "Task (your specific responsibility or challenge)",
     "A": "Action (the concrete steps you personally took)",
     "R": "Result (the measurable outcome or impact)",
 }
+
+
+def _normalize_score(raw_score, fallback_score: float) -> float:
+    if isinstance(raw_score, (int, float)):
+        val = float(raw_score)
+        normalized = val / 100.0 if val > 1.0 else val
+        return round(max(fallback_score, min(1.0, max(0.0, normalized))), 3)
+    return round(fallback_score, 3)
 
 
 def validate_dsa_answer(extracted, rubric):
@@ -29,13 +68,15 @@ def validate_dsa_answer(extracted, rubric):
         or ""
     )
 
-    ext_paradigm = _normalize(extracted.get("algorithmic_paradigm", ""))
-    ext_time = _normalize(extracted.get("time_complexity", ""))
-    ext_space = _normalize(extracted.get("space_complexity", ""))
+    ext_paradigm = _normalize(
+        extracted.get("paradigm") or extracted.get("algorithmic_paradigm", "")
+    )
+    ext_time = _normalize(extracted.get("time_complexity", "")).replace(" ", "")
+    ext_space = _normalize(extracted.get("space_complexity", "")).replace(" ", "")
 
     opt_paradigm_norm = _normalize(optimal_paradigm)
-    opt_time_norm = _normalize(optimal_time)
-    opt_space_norm = _normalize(optimal_space)
+    opt_time_norm = _normalize(optimal_time).replace(" ", "")
+    opt_space_norm = _normalize(optimal_space).replace(" ", "")
 
     paradigm_correct = bool(
         ext_paradigm
@@ -48,11 +89,23 @@ def validate_dsa_answer(extracted, rubric):
     )
 
     time_complexity_correct = bool(
-        ext_time and ext_time != "none" and ext_time == opt_time_norm
+        ext_time
+        and ext_time != "none"
+        and (
+            ext_time == opt_time_norm
+            or opt_time_norm in ext_time
+            or ext_time in opt_time_norm
+        )
     )
 
     space_complexity_correct = bool(
-        ext_space and ext_space != "none" and ext_space == opt_space_norm
+        ext_space
+        and ext_space != "none"
+        and (
+            ext_space == opt_space_norm
+            or opt_space_norm in ext_space
+            or ext_space in opt_space_norm
+        )
     )
 
     correct_count = sum(
@@ -63,13 +116,14 @@ def validate_dsa_answer(extracted, rubric):
         ]
     )
 
-    score = correct_count / 3
+    det_score = correct_count / 3
+    score = _normalize_score(extracted.get("score"), det_score)
 
     return {
         "paradigm_correct": paradigm_correct,
         "time_complexity_correct": time_complexity_correct,
         "space_complexity_correct": space_complexity_correct,
-        "score": round(score, 3),
+        "score": score,
     }
 
 
@@ -186,7 +240,8 @@ def validate_final_evaluation(teacher_output: dict, dynamic_session) -> dict:
             space_complexity_correct,
         ]
     )
-    score = round(correct_count / 3, 3)
+    det_score = correct_count / 3
+    score = _normalize_score(teacher_output.get("score"), det_score)
 
     return {
         "paradigm_correct": paradigm_correct,

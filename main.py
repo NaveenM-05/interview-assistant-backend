@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+import asyncio
 import time
 import json
 import uuid
@@ -21,8 +22,14 @@ from llm_parser import (
     generate_interview_question,
     generate_interviewer_turn,
     generate_teacher_evaluation,
+    stream_interviewer_turn,
+    extract_interviewer_metrics,
+    stream_teacher_evaluation,
+    extract_teacher_metrics,
 )
 from validator import (
+    VALID_DSA_TOPICS,
+    VALID_BEHAVIORAL_TOPICS,
     validate_dsa_answer,
     validate_behavioral_answer,
     validate_dynamic_turn,
@@ -45,7 +52,7 @@ app.add_middleware(
 
 
 class GenerateQuestionRequest(BaseModel):
-    topic: str
+    topic: str = VALID_DSA_TOPICS[0]
     difficulty: str = "Medium"
     interview_type: str = "DSA"
 
@@ -142,8 +149,6 @@ async def interview_websocket(
     await websocket.accept()
     print(f"Session {session_id} connected.")
 
-    db = SessionLocal()
-
     try:
         while True:
             message = await websocket.receive_text()
@@ -162,93 +167,268 @@ async def interview_websocket(
             user_id = request_data.get("user_id", "test_user_123")
             code_payload = request_data.get("code") or ""
 
-            # Fetch DynamicSession and past MessageHistory from the database if present
-            dynamic_session = (
-                db.query(DynamicSession)
-                .filter(DynamicSession.session_id == session_id)
-                .first()
-            )
-
-            history_record = None
-            if dynamic_session:
-                history_record = (
-                    db.query(MessageHistory)
-                    .filter(MessageHistory.session_id == session_id)
+            with SessionLocal() as db:
+                # Fetch DynamicSession and past MessageHistory from the database if present
+                dynamic_session = (
+                    db.query(DynamicSession)
+                    .filter(DynamicSession.session_id == session_id)
                     .first()
                 )
-                if not history_record:
-                    history_record = MessageHistory(
-                        session_id=session_id,
-                        messages=[],
+
+                history_record = None
+                if dynamic_session:
+                    history_record = (
+                        db.query(MessageHistory)
+                        .filter(MessageHistory.session_id == session_id)
+                        .first()
                     )
-                    db.add(history_record)
-                    db.commit()
-                    db.refresh(history_record)
+                    if not history_record:
+                        history_record = MessageHistory(
+                            session_id=session_id,
+                            messages=[],
+                        )
+                        db.add(history_record)
+                        db.commit()
+                        db.refresh(history_record)
 
-            # ==================================================
-            # CASE A: DYNAMIC MULTI-TURN SESSION
-            # ==================================================
-            if dynamic_session:
-                chat_messages = list(history_record.messages or [])
+                # ==================================================
+                # CASE A: DYNAMIC MULTI-TURN SESSION
+                # ==================================================
+                if dynamic_session:
+                    chat_messages = list(history_record.messages or [])
 
-                # 1. Final Evaluation Trigger ("Teacher" mode)
-                if action == "evaluate_final":
-                    final_transcript = (request_data.get("transcript") or "").strip()
-                    if final_transcript or code_payload.strip():
-                        chat_messages.append(
-                            {
-                                "role": "user",
-                                "content": final_transcript,
-                                "code": code_payload,
-                            }
+                    async def _stream_chunks(async_gen) -> str:
+                        chunks = []
+                        async for text_chunk in async_gen:
+                            if text_chunk:
+                                chunks.append(text_chunk)
+                                await websocket.send_json(
+                                    {"type": "chunk", "text": text_chunk}
+                                )
+                        return "".join(chunks).strip()
+
+                    async def _with_timeout(coro, fallback_dict: dict) -> dict:
+                        try:
+                            return await asyncio.wait_for(coro, timeout=15.0)
+                        except Exception as err:
+                            print(f"Metrics extraction timed out or failed: {err}")
+                            return fallback_dict
+
+                    # 1. Final Evaluation Trigger ("Teacher" mode)
+                    if action == "evaluate_final":
+                        final_transcript = (
+                            request_data.get("transcript") or ""
+                        ).strip()
+                        if final_transcript or code_payload.strip():
+                            chat_messages.append(
+                                {
+                                    "role": "user",
+                                    "content": final_transcript,
+                                    "code": code_payload,
+                                }
+                            )
+
+                        t_llm_start = time.perf_counter()
+                        streamed_feedback, teacher_metrics = await asyncio.gather(
+                            _stream_chunks(
+                                stream_teacher_evaluation(
+                                    question_text=dynamic_session.generated_question,
+                                    optimal_paradigm=dynamic_session.optimal_paradigm,
+                                    optimal_time=dynamic_session.optimal_time,
+                                    optimal_space=dynamic_session.optimal_space,
+                                    optimal_solution_text=dynamic_session.optimal_solution_text,
+                                    chat_history=chat_messages,
+                                    code=code_payload,
+                                )
+                            ),
+                            _with_timeout(
+                                extract_teacher_metrics(
+                                    question_text=dynamic_session.generated_question,
+                                    optimal_paradigm=dynamic_session.optimal_paradigm,
+                                    optimal_time=dynamic_session.optimal_time,
+                                    optimal_space=dynamic_session.optimal_space,
+                                    optimal_solution_text=dynamic_session.optimal_solution_text,
+                                    chat_history=chat_messages,
+                                    code=code_payload,
+                                ),
+                                {
+                                    "score": 0,
+                                    "paradigm": "None",
+                                    "algorithmic_paradigm": "None",
+                                    "time_complexity": "None",
+                                    "space_complexity": "None",
+                                    "paradigm_correct": False,
+                                    "time_complexity_correct": False,
+                                    "space_complexity_correct": False,
+                                    "optimal_code_snippet": "",
+                                },
+                            ),
+                        )
+                        t_llm_end = time.perf_counter()
+
+                        teacher_output = {
+                            **teacher_metrics,
+                            "teacher_feedback": streamed_feedback
+                            or teacher_metrics.get("teacher_feedback")
+                            or "Session concluded. Review the optimal solution below.",
+                        }
+
+                        t_val_start = time.perf_counter()
+                        validation_result = validate_final_evaluation(
+                            teacher_output,
+                            dynamic_session,
+                        )
+                        t_val_end = time.perf_counter()
+
+                        # Save final score to PerformanceRecord for the dashboard
+                        performance_record = PerformanceRecord(
+                            user_id=user_id,
+                            skill=dynamic_session.topic,
+                            paradigm_correct=validation_result["paradigm_correct"],
+                            time_complexity_correct=validation_result[
+                                "time_complexity_correct"
+                            ],
+                            space_complexity_correct=validation_result[
+                                "space_complexity_correct"
+                            ],
+                            score=validation_result["score"],
+                        )
+                        db.add(performance_record)
+
+                        teacher_prompt = validation_result["teacher_feedback"]
+                        optimal_code_snippet = validation_result.get(
+                            "optimal_code_snippet", ""
                         )
 
+                        chat_messages.append(
+                            {
+                                "role": "teacher",
+                                "content": teacher_prompt,
+                                "optimal_solution_text": dynamic_session.optimal_solution_text,
+                                "optimal_code_snippet": optimal_code_snippet,
+                                "score": validation_result["score"],
+                            }
+                        )
+                        history_record.messages = chat_messages
+                        flag_modified(history_record, "messages")
+                        db.commit()
+
+                        t_llm_latency_ms = round(
+                            (t_llm_end - t_llm_start) * 1000, 2
+                        )
+                        t_val_latency_ms = round(
+                            (t_val_end - t_val_start) * 1000, 2
+                        )
+                        total_latency_ms = round(
+                            (time.perf_counter() - start_time) * 1000, 2
+                        )
+
+                        response = {
+                            "type": "done",
+                            "action": "evaluate_final",
+                            "is_final": True,
+                            "barge_in_prompt": teacher_prompt,
+                            "teacher_feedback": teacher_prompt,
+                            "optimal_solution_text": dynamic_session.optimal_solution_text,
+                            "optimal_code_snippet": optimal_code_snippet,
+                            "raw_extraction": teacher_output,
+                            "validation": validation_result,
+                            "rubric": {
+                                "category": (
+                                    "BEHAVIORAL"
+                                    if (
+                                        dynamic_session.optimal_paradigm or ""
+                                    ).upper()
+                                    == "BEHAVIORAL"
+                                    else "DSA"
+                                ),
+                                "skill": dynamic_session.topic,
+                                "difficulty": dynamic_session.difficulty,
+                                "algorithmic_paradigm": dynamic_session.optimal_paradigm,
+                                "time_complexity": dynamic_session.optimal_time,
+                                "space_complexity": dynamic_session.optimal_space,
+                            },
+                            "chat_history": chat_messages,
+                            "metrics": {
+                                "T_LLM_ms": t_llm_latency_ms,
+                                "T_Validation_ms": t_val_latency_ms,
+                                "Total_Cloud_Latency_ms": total_latency_ms,
+                            },
+                        }
+                        await websocket.send_json(response)
+                        continue
+
+                    # 2. Standard Multi-Turn Cross-Questioning Step ("Strict Interviewer" mode)
+                    text_payload = (request_data.get("transcript") or "").strip()
+                    if not text_payload and not code_payload.strip():
+                        await websocket.send_json(
+                            {
+                                "error": "Expected non-empty 'transcript' or 'code', or {'action': 'evaluate_final'}."
+                            }
+                        )
+                        continue
+
                     t_llm_start = time.perf_counter()
-                    teacher_output = generate_teacher_evaluation(
-                        question_text=dynamic_session.generated_question,
-                        optimal_paradigm=dynamic_session.optimal_paradigm,
-                        optimal_time=dynamic_session.optimal_time,
-                        optimal_space=dynamic_session.optimal_space,
-                        optimal_solution_text=dynamic_session.optimal_solution_text,
-                        chat_history=chat_messages,
-                        code=code_payload,
+                    streamed_followup, turn_metrics = await asyncio.gather(
+                        _stream_chunks(
+                            stream_interviewer_turn(
+                                question_text=dynamic_session.generated_question,
+                                optimal_paradigm=dynamic_session.optimal_paradigm,
+                                optimal_time=dynamic_session.optimal_time,
+                                optimal_space=dynamic_session.optimal_space,
+                                chat_history=chat_messages,
+                                latest_transcript=text_payload,
+                                code=code_payload,
+                            )
+                        ),
+                        _with_timeout(
+                            extract_interviewer_metrics(
+                                question_text=dynamic_session.generated_question,
+                                optimal_paradigm=dynamic_session.optimal_paradigm,
+                                optimal_time=dynamic_session.optimal_time,
+                                optimal_space=dynamic_session.optimal_space,
+                                chat_history=chat_messages,
+                                latest_transcript=text_payload,
+                                code=code_payload,
+                            ),
+                            {
+                                "score": 0,
+                                "paradigm": "None",
+                                "algorithmic_paradigm": "None",
+                                "time_complexity": "None",
+                                "space_complexity": "None",
+                            },
+                        ),
                     )
                     t_llm_end = time.perf_counter()
 
+                    interviewer_output = {
+                        **turn_metrics,
+                        "followup_question": streamed_followup,
+                    }
+
                     t_val_start = time.perf_counter()
-                    validation_result = validate_final_evaluation(
-                        teacher_output,
+                    validation_result = validate_dynamic_turn(
+                        interviewer_output,
                         dynamic_session,
                     )
                     t_val_end = time.perf_counter()
 
-                    # Save final score to PerformanceRecord for the dashboard
-                    performance_record = PerformanceRecord(
-                        user_id=user_id,
-                        skill=dynamic_session.topic,
-                        paradigm_correct=validation_result["paradigm_correct"],
-                        time_complexity_correct=validation_result[
-                            "time_complexity_correct"
-                        ],
-                        space_complexity_correct=validation_result[
-                            "space_complexity_correct"
-                        ],
-                        score=validation_result["score"],
-                    )
-                    db.add(performance_record)
+                    followup_question = validation_result["followup_question"]
 
-                    teacher_prompt = validation_result["teacher_feedback"]
-                    optimal_code_snippet = validation_result.get(
-                        "optimal_code_snippet", ""
-                    )
-
+                    # Append user message (with code snapshot) and interviewer follow-up to MessageHistory
                     chat_messages.append(
                         {
-                            "role": "teacher",
-                            "content": teacher_prompt,
-                            "optimal_solution_text": dynamic_session.optimal_solution_text,
-                            "optimal_code_snippet": optimal_code_snippet,
-                            "score": validation_result["score"],
+                            "role": "user",
+                            "content": text_payload,
+                            "code": code_payload,
+                        }
+                    )
+                    chat_messages.append(
+                        {
+                            "role": "ai",
+                            "content": followup_question,
+                            "validation": validation_result,
                         }
                     )
                     history_record.messages = chat_messages
@@ -262,13 +442,10 @@ async def interview_websocket(
                     )
 
                     response = {
-                        "action": "evaluate_final",
-                        "is_final": True,
-                        "barge_in_prompt": teacher_prompt,
-                        "teacher_feedback": teacher_prompt,
-                        "optimal_solution_text": dynamic_session.optimal_solution_text,
-                        "optimal_code_snippet": optimal_code_snippet,
-                        "raw_extraction": teacher_output,
+                        "type": "done",
+                        "is_final": False,
+                        "barge_in_prompt": followup_question,
+                        "raw_extraction": interviewer_output,
                         "validation": validation_result,
                         "rubric": {
                             "category": (
@@ -290,200 +467,118 @@ async def interview_websocket(
                             "Total_Cloud_Latency_ms": total_latency_ms,
                         },
                     }
-                    await websocket.send_text(json.dumps(response))
+                    await websocket.send_json(response)
                     continue
 
-                # 2. Standard Multi-Turn Cross-Questioning Step ("Strict Interviewer" mode)
-                text_payload = (request_data.get("transcript") or "").strip()
-                if not text_payload and not code_payload.strip():
+                # ==================================================
+                # CASE B: STATIC RUBRIC SESSION (FALLBACK / LEGACY)
+                # ==================================================
+                try:
+                    skill = request_data["skill"]
+                    text_payload = request_data["transcript"]
+                except KeyError:
                     await websocket.send_text(
                         json.dumps(
                             {
-                                "error": "Expected non-empty 'transcript' or 'code', or {'action': 'evaluate_final'}."
+                                "error": (
+                                    "Invalid request. Expected a valid dynamic session_id "
+                                    "or JSON with 'skill' and 'transcript'."
+                                )
                             }
                         )
                     )
                     continue
 
-                t_llm_start = time.perf_counter()
-                interviewer_output = generate_interviewer_turn(
-                    question_text=dynamic_session.generated_question,
-                    optimal_paradigm=dynamic_session.optimal_paradigm,
-                    optimal_time=dynamic_session.optimal_time,
-                    optimal_space=dynamic_session.optimal_space,
-                    chat_history=chat_messages,
-                    latest_transcript=text_payload,
-                    code=code_payload,
+                rubric = (
+                    db.query(ProblemRubric)
+                    .filter(ProblemRubric.skill == skill)
+                    .first()
                 )
+
+                if not rubric:
+                    await websocket.send_text(
+                        json.dumps(
+                            {"error": f"No rubric found for skill: {skill}"}
+                        )
+                    )
+                    continue
+
+                t_llm_start = time.perf_counter()
+                if rubric.category == "BEHAVIORAL":
+                    extracted_json = extract_star_schema(text_payload)
+                else:
+                    extracted_json = extract_dsa_schema(text_payload)
                 t_llm_end = time.perf_counter()
 
                 t_val_start = time.perf_counter()
-                validation_result = validate_dynamic_turn(
-                    interviewer_output,
-                    dynamic_session,
-                )
+                if rubric.category == "BEHAVIORAL":
+                    validation_result = validate_behavioral_answer(
+                        extracted_json, rubric
+                    )
+                else:
+                    validation_result = validate_dsa_answer(
+                        extracted_json, rubric
+                    )
                 t_val_end = time.perf_counter()
 
-                followup_question = validation_result["followup_question"]
+                t_val_latency_ms = round((t_val_end - t_val_start) * 1000, 2)
 
-                # Append user message (with code snapshot) and interviewer follow-up to MessageHistory
-                chat_messages.append(
-                    {
-                        "role": "user",
-                        "content": text_payload,
-                        "code": code_payload,
-                    }
+                performance_record = PerformanceRecord(
+                    user_id=session_id,
+                    skill=rubric.skill,
+                    paradigm_correct=validation_result.get("paradigm_correct"),
+                    time_complexity_correct=validation_result.get(
+                        "time_complexity_correct"
+                    ),
+                    space_complexity_correct=validation_result.get(
+                        "space_complexity_correct"
+                    ),
+                    score=validation_result["score"],
                 )
-                chat_messages.append(
-                    {
-                        "role": "ai",
-                        "content": followup_question,
-                        "validation": validation_result,
-                    }
-                )
-                history_record.messages = chat_messages
-                flag_modified(history_record, "messages")
+                db.add(performance_record)
                 db.commit()
 
                 t_llm_latency_ms = round((t_llm_end - t_llm_start) * 1000, 2)
-                t_val_latency_ms = round((t_val_end - t_val_start) * 1000, 2)
                 total_latency_ms = round(
                     (time.perf_counter() - start_time) * 1000, 2
                 )
 
+                if rubric.category == "BEHAVIORAL":
+                    missing = validation_result.get("missing_components", [])
+                    if missing:
+                        barge_in_prompt = (
+                            f"Good start! Please elaborate on the missing STAR "
+                            f"components: {', '.join(missing)}."
+                        )
+                    else:
+                        barge_in_prompt = (
+                            "Excellent STAR response! You covered Situation, Task, Action, and Result."
+                        )
+                else:
+                    barge_in_prompt = (
+                        f"Extracted complexity: {extracted_json.get('time_complexity')}"
+                    )
+
                 response = {
-                    "is_final": False,
-                    "barge_in_prompt": followup_question,
-                    "raw_extraction": interviewer_output,
+                    "barge_in_prompt": barge_in_prompt,
+                    "raw_extraction": extracted_json,
                     "validation": validation_result,
                     "rubric": {
-                        "category": (
-                            "BEHAVIORAL"
-                            if (dynamic_session.optimal_paradigm or "").upper()
-                            == "BEHAVIORAL"
-                            else "DSA"
-                        ),
-                        "skill": dynamic_session.topic,
-                        "difficulty": dynamic_session.difficulty,
-                        "algorithmic_paradigm": dynamic_session.optimal_paradigm,
-                        "time_complexity": dynamic_session.optimal_time,
-                        "space_complexity": dynamic_session.optimal_space,
+                        "category": rubric.category,
+                        "skill": rubric.skill,
+                        "algorithmic_paradigm": rubric.optimal_paradigm,
+                        "time_complexity": rubric.optimal_time_complexity,
+                        "space_complexity": rubric.optimal_space_complexity,
+                        "required_star_components": rubric.required_star_components,
                     },
-                    "chat_history": chat_messages,
                     "metrics": {
                         "T_LLM_ms": t_llm_latency_ms,
                         "T_Validation_ms": t_val_latency_ms,
                         "Total_Cloud_Latency_ms": total_latency_ms,
                     },
                 }
+
                 await websocket.send_text(json.dumps(response))
-                continue
-
-            # ==================================================
-            # CASE B: STATIC RUBRIC SESSION (FALLBACK / LEGACY)
-            # ==================================================
-            try:
-                skill = request_data["skill"]
-                text_payload = request_data["transcript"]
-            except KeyError:
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "error": (
-                                "Invalid request. Expected a valid dynamic session_id "
-                                "or JSON with 'skill' and 'transcript'."
-                            )
-                        }
-                    )
-                )
-                continue
-
-            rubric = (
-                db.query(ProblemRubric)
-                .filter(ProblemRubric.skill == skill)
-                .first()
-            )
-
-            if not rubric:
-                await websocket.send_text(
-                    json.dumps({"error": f"No rubric found for skill: {skill}"})
-                )
-                continue
-
-            t_llm_start = time.perf_counter()
-            if rubric.category == "BEHAVIORAL":
-                extracted_json = extract_star_schema(text_payload)
-            else:
-                extracted_json = extract_dsa_schema(text_payload)
-            t_llm_end = time.perf_counter()
-
-            t_val_start = time.perf_counter()
-            if rubric.category == "BEHAVIORAL":
-                validation_result = validate_behavioral_answer(
-                    extracted_json, rubric
-                )
-            else:
-                validation_result = validate_dsa_answer(extracted_json, rubric)
-            t_val_end = time.perf_counter()
-
-            t_val_latency_ms = round((t_val_end - t_val_start) * 1000, 2)
-
-            performance_record = PerformanceRecord(
-                user_id=session_id,
-                skill=rubric.skill,
-                paradigm_correct=validation_result.get("paradigm_correct"),
-                time_complexity_correct=validation_result.get(
-                    "time_complexity_correct"
-                ),
-                space_complexity_correct=validation_result.get(
-                    "space_complexity_correct"
-                ),
-                score=validation_result["score"],
-            )
-            db.add(performance_record)
-            db.commit()
-
-            t_llm_latency_ms = round((t_llm_end - t_llm_start) * 1000, 2)
-            total_latency_ms = round(
-                (time.perf_counter() - start_time) * 1000, 2
-            )
-
-            if rubric.category == "BEHAVIORAL":
-                missing = validation_result.get("missing_components", [])
-                if missing:
-                    barge_in_prompt = (
-                        f"Good start! Please elaborate on the missing STAR "
-                        f"components: {', '.join(missing)}."
-                    )
-                else:
-                    barge_in_prompt = (
-                        "Excellent STAR response! You covered Situation, Task, Action, and Result."
-                    )
-            else:
-                barge_in_prompt = (
-                    f"Extracted complexity: {extracted_json.get('time_complexity')}"
-                )
-
-            response = {
-                "barge_in_prompt": barge_in_prompt,
-                "raw_extraction": extracted_json,
-                "validation": validation_result,
-                "rubric": {
-                    "category": rubric.category,
-                    "skill": rubric.skill,
-                    "algorithmic_paradigm": rubric.optimal_paradigm,
-                    "time_complexity": rubric.optimal_time_complexity,
-                    "space_complexity": rubric.optimal_space_complexity,
-                    "required_star_components": rubric.required_star_components,
-                },
-                "metrics": {
-                    "T_LLM_ms": t_llm_latency_ms,
-                    "T_Validation_ms": t_val_latency_ms,
-                    "Total_Cloud_Latency_ms": total_latency_ms,
-                },
-            }
-
-            await websocket.send_text(json.dumps(response))
 
     except WebSocketDisconnect:
         print(f"Session {session_id} disconnected.")
@@ -494,5 +589,4 @@ async def interview_websocket(
         except Exception:
             pass
     finally:
-        db.close()
-        print(f"Database connection closed for session {session_id}.")
+        print(f"WebSocket connection closed for session {session_id}.")

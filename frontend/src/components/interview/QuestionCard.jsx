@@ -1,4 +1,7 @@
 import { Sparkles } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { markdownComponents } from './MessageBubble';
 
 export default function QuestionCard({ question, isBehavioral }) {
   return (
@@ -11,7 +14,11 @@ export default function QuestionCard({ question, isBehavioral }) {
           Your {isBehavioral ? 'behavioral' : 'DSA'} question
         </h2>
       </div>
-      <p className="whitespace-pre-line text-base leading-relaxed text-white sm:text-lg">{question}</p>
+      <div className="text-base leading-relaxed text-white sm:text-lg">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          {question}
+        </ReactMarkdown>
+      </div>
     </section>
   );
 }
