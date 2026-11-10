@@ -1,55 +1,43 @@
-import { useState } from 'react';
-import Interview from './components/Interview';
-import Dashboard from './components/Dashboard';
+import { lazy, Suspense } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import AppShell from './components/layout/AppShell';
+import Landing from './pages/Landing';
+import Setup from './pages/Setup';
+import Dashboard from './pages/Dashboard';
+
+// The interview room pulls in Monaco, so load it only when needed.
+const InterviewRoom = lazy(() => import('./pages/InterviewRoom'));
+
+function RouteFallback() {
+  return (
+    <div className="mx-auto max-w-7xl space-y-6 px-4 py-10 sm:px-6" aria-busy="true">
+      <div className="skeleton h-10 w-72" />
+      <div className="skeleton h-32 w-full" />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="skeleton h-[26rem]" />
+        <div className="skeleton h-[26rem]" />
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('interview');
-
   return (
-    <div className="min-h-screen bg-gray-100 text-gray-900">
-      {/* Top Navigation Bar */}
-      <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold text-blue-600">
-              AI Interview Assistant
-            </h1>
-            <p className="text-xs text-gray-500">
-              Real-Time DSA Evaluation, Live Code Analysis &amp; Adaptive Recommendation Engine
-            </p>
-          </div>
-
-          <nav className="inline-flex rounded-lg bg-gray-100 p-1 border border-gray-200">
-            <button
-              type="button"
-              onClick={() => setActiveTab('interview')}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition cursor-pointer ${
-                activeTab === 'interview'
-                  ? 'bg-white text-blue-600 shadow-md'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Mock Interview
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('dashboard')}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition cursor-pointer ${
-                activeTab === 'dashboard'
-                  ? 'bg-white text-blue-600 shadow-md'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Feedback Dashboard
-            </button>
-          </nav>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto p-6">
-        {activeTab === 'interview' ? <Interview /> : <Dashboard />}
-      </main>
-    </div>
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route index element={<Landing />} />
+        <Route path="setup" element={<Setup />} />
+        <Route
+          path="interview"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <InterviewRoom />
+            </Suspense>
+          }
+        />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }
