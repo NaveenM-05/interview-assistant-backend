@@ -129,7 +129,8 @@ def validate_dsa_answer(extracted, rubric):
 
 def validate_behavioral_answer(extracted, rubric=None):
     """
-    Compare LLM-extracted STAR components against the behavioral rubric.
+    Compare LLM-extracted STAR components against the behavioral rubric,
+    enforcing strict caps when Action (A) or Result (R) are missing.
     """
     required = getattr(rubric, "required_star_components", None) or {
         "S": True,
@@ -137,18 +138,40 @@ def validate_behavioral_answer(extracted, rubric=None):
         "A": True,
         "R": True,
     }
+    s_ok = bool(extracted.get("situation_covered", extracted.get("S", False)))
+    t_ok = bool(extracted.get("task_covered", extracted.get("T", False)))
+    a_ok = bool(extracted.get("action_covered", extracted.get("A", False)))
+    r_ok = bool(extracted.get("result_covered", extracted.get("R", False)))
+
+    star_map = {"S": s_ok, "T": t_ok, "A": a_ok, "R": r_ok}
     required_keys = [k for k, v in required.items() if v]
-    matched_count = sum(1 for k in required_keys if bool(extracted.get(k)))
-    missing_keys = [k for k in required_keys if not bool(extracted.get(k))]
-    score = matched_count / len(required_keys) if required_keys else 1.0
+    matched_count = sum(1 for k in required_keys if star_map.get(k, False))
+    missing_keys = [k for k in required_keys if not star_map.get(k, False)]
+
+    det_score = matched_count / len(required_keys) if required_keys else 1.0
+    raw_score = extracted.get("score")
+    if isinstance(raw_score, (int, float)):
+        val = float(raw_score)
+        score = val / 100.0 if val > 1.0 else val
+    else:
+        score = det_score
+
+    if missing_keys:
+        score = min(score, 0.85)
+    if not a_ok or not r_ok:
+        score = min(score, 0.60)
 
     return {
-        "S": bool(extracted.get("S")),
-        "T": bool(extracted.get("T")),
-        "A": bool(extracted.get("A")),
-        "R": bool(extracted.get("R")),
+        "S": s_ok,
+        "T": t_ok,
+        "A": a_ok,
+        "R": r_ok,
+        "situation_covered": s_ok,
+        "task_covered": t_ok,
+        "action_covered": a_ok,
+        "result_covered": r_ok,
         "missing_components": missing_keys,
-        "score": round(score, 3),
+        "score": round(max(0.0, min(1.0, score)), 3),
     }
 
 

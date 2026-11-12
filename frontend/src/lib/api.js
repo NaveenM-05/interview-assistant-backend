@@ -33,8 +33,15 @@ export function generateQuestion({ interviewType, topic, difficulty }) {
   });
 }
 
+// GET /api/dashboard/{userId} → { user_id, average_accuracy, weakest_skill, top_priority_skill, recommendations }
+export async function getDashboardData(userId) {
+  return request(`/api/dashboard/${encodeURIComponent(userId)}`, {
+    cache: 'no-store',
+  });
+}
+
 // GET /recommendations/{userId} → { recommendations: [{ skill, accuracy, weak_area, priority, action }] }
 export async function getRecommendations(userId) {
-  const data = await request(`/recommendations/${encodeURIComponent(userId)}`);
+  const data = await getDashboardData(userId);
   return data.recommendations || [];
 }

@@ -211,31 +211,75 @@ def extract_dsa_schema(transcript_text: str) -> dict:
         }
 
 
+def _normalize_behavioral_metrics(data: dict) -> dict:
+    s_ok = bool(data.get("situation_covered", data.get("S", False)))
+    t_ok = bool(data.get("task_covered", data.get("T", False)))
+    a_ok = bool(data.get("action_covered", data.get("A", False)))
+    r_ok = bool(data.get("result_covered", data.get("R", False)))
+
+    raw_score = data.get("score")
+    if isinstance(raw_score, (int, float)):
+        score_int = int(round(raw_score * 100)) if 0 < raw_score <= 1.0 else int(round(raw_score))
+    else:
+        score_int = sum([s_ok, t_ok, a_ok, r_ok]) * 25
+
+    score_int = max(0, min(100, score_int))
+    if not (s_ok and t_ok and a_ok and r_ok):
+        score_int = min(score_int, 85)
+    if not a_ok or not r_ok:
+        score_int = min(score_int, 60)
+
+    data["S"] = s_ok
+    data["T"] = t_ok
+    data["A"] = a_ok
+    data["R"] = r_ok
+    data["situation_covered"] = s_ok
+    data["task_covered"] = t_ok
+    data["action_covered"] = a_ok
+    data["result_covered"] = r_ok
+    data["score"] = score_int
+    data["paradigm"] = data.get("paradigm", "STAR Method")
+    data["algorithmic_paradigm"] = data["paradigm"]
+    data["time_complexity"] = data.get("time_complexity", "N/A")
+    data["space_complexity"] = data.get("space_complexity", "N/A")
+    return data
+
+
 def extract_star_schema(transcript_text: str) -> dict:
     prompt = f"""
-    You are an information extraction engine. Do not evaluate or grade the answer.
-    Determine whether the candidate's behavioral answer includes each component of the STAR method:
-    - S (Situation): Context or background of the event
-    - T (Task): The specific responsibility or challenge faced
-    - A (Action): Concrete steps the candidate took
-    - R (Result): Outcome or impact of the actions
+    You are a strict behavioral interview evaluation engine.
+    Determine whether the candidate's behavioral answer robustly satisfies each component of the STAR method:
+    - situation_covered / S (Situation): Specific context or background of the event.
+    - task_covered / T (Task): The specific responsibility or challenge faced.
+    - action_covered / A (Action): Only set action_covered: true if the candidate provides specific, technical, or concrete steps they personally took. Vague statements like 'I worked hard' or 'I read docs' must result in false.
+    - result_covered / R (Result): Only set result_covered: true if the candidate provides measurable, quantified, or highly specific business outcomes. Statements like 'the client was happy' must result in false.
+    - score: Integer 0-100. Cap the score strictly at 50-60 if Action or Result are missing or evaluate to false. Do not give 100 unless all 4 STAR components are robustly satisfied.
 
     Candidate Answer: "{transcript_text}"
 
-    Return a JSON object with boolean values for this schema:
+    Return ONLY a raw JSON object with this exact schema:
     {{
+        "score": 50,
+        "situation_covered": true,
+        "task_covered": true,
+        "action_covered": false,
+        "result_covered": false,
         "S": true,
         "T": true,
-        "A": true,
+        "A": false,
         "R": false
     }}
     """
 
     try:
-        return _generate_json(prompt, models_list=FAST_MODELS)
+        return _normalize_behavioral_metrics(
+            _generate_json(prompt, models_list=FAST_MODELS)
+        )
     except Exception as e:
         print(f"Failed to parse behavioral LLM output: {e}")
-        return {"S": False, "T": False, "A": False, "R": False}
+        return _normalize_behavioral_metrics(
+            {"score": 0, "S": False, "T": False, "A": False, "R": False}
+        )
 
 
 def generate_interviewer_turn(
@@ -546,11 +590,15 @@ async def extract_interviewer_metrics(
     """
     if (optimal_paradigm or "").strip().upper() == "BEHAVIORAL":
         prompt = f"""
-        Evaluate the candidate's cumulative behavioral interview responses across the conversation so far for the 4 STAR components:
-        - S (Situation)
-        - T (Task)
-        - A (Action)
-        - R (Result)
+        You are a strict behavioral interview evaluator grading the candidate's cumulative responses across the conversation so far for the 4 STAR components:
+        - situation_covered / S (Situation): Specific context or background of the project/team.
+        - task_covered / T (Task): Specific responsibility, challenge, or goal owned by the candidate.
+        - action_covered / A (Action): Only set action_covered: true (and "A": true) if the candidate provides specific, technical, or concrete steps they personally took. Vague statements like 'I worked hard' or 'I read docs' must result in false.
+        - result_covered / R (Result): Only set result_covered: true (and "R": true) if the candidate provides measurable, quantified, or highly specific business outcomes. Statements like 'the client was happy' must result in false.
+
+        Strict Scoring Rules:
+        - Cap the score strictly at 50-60 if Action or Result are missing or evaluate to false.
+        - Do not give 100% (100) unless all 4 STAR components are robustly satisfied with concrete actions and measurable/specific results.
 
         Behavioral Question: "{question_text}"
         Past Conversation History: {json.dumps(chat_history, indent=2)}
@@ -558,13 +606,17 @@ async def extract_interviewer_metrics(
 
         Return ONLY a raw JSON object with this exact schema:
         {{
-            "score": 75,
+            "score": 55,
             "paradigm": "STAR Method",
             "time_complexity": "N/A",
             "space_complexity": "N/A",
+            "situation_covered": true,
+            "task_covered": true,
+            "action_covered": false,
+            "result_covered": false,
             "S": true,
             "T": true,
-            "A": true,
+            "A": false,
             "R": false
         }}
         """
@@ -580,21 +632,21 @@ async def extract_interviewer_metrics(
                 timeout=15.0,
             )
             data = json.loads(response.text)
-            data["algorithmic_paradigm"] = data.get("paradigm", "STAR Method")
-            return data
+            return _normalize_behavioral_metrics(data)
         except Exception as e:
             print(f"Failed or timed out extracting behavioral turn metrics: {e}")
-            return {
-                "score": 0,
-                "paradigm": "STAR Method",
-                "algorithmic_paradigm": "STAR Method",
-                "time_complexity": "N/A",
-                "space_complexity": "N/A",
-                "S": False,
-                "T": False,
-                "A": False,
-                "R": False,
-            }
+            return _normalize_behavioral_metrics(
+                {
+                    "score": 0,
+                    "paradigm": "STAR Method",
+                    "time_complexity": "N/A",
+                    "space_complexity": "N/A",
+                    "S": False,
+                    "T": False,
+                    "A": False,
+                    "R": False,
+                }
+            )
 
     prompt = f"""
     Analyze the candidate's cumulative explanation and code so far against the target optimal rubric.
@@ -724,21 +776,32 @@ async def extract_teacher_metrics(
     """
     if (optimal_paradigm or "").strip().upper() == "BEHAVIORAL":
         prompt = f"""
-        Determine whether the candidate's cumulative responses across the conversation covered each STAR component (S, T, A, R) and assign a final score from 0 to 100.
+        You are a strict behavioral interview evaluator grading the candidate's cumulative responses across the full conversation for the 4 STAR components (S, T, A, R) and assigning a final score from 0 to 100.
+
+        Strict Grading Rules:
+        - situation_covered / S (Situation): True only if the candidate established clear, specific context.
+        - task_covered / T (Task): True only if the candidate stated their specific responsibility or challenge.
+        - action_covered / A (Action): Only set action_covered: true (and "A": true) if the candidate provides specific, technical, or concrete steps they personally took. Vague statements like 'I worked hard' or 'I read docs' must result in false.
+        - result_covered / R (Result): Only set result_covered: true (and "R": true) if the candidate provides measurable, quantified, or highly specific business outcomes. Statements like 'the client was happy' must result in false.
+        - Cap the score strictly at 50-60 if Action or Result are missing or evaluate to false. Do not give 100% (100) unless all 4 STAR components are robustly satisfied.
 
         Behavioral Question: "{question_text}"
         Full Interview Transcript History: {json.dumps(chat_history, indent=2)}
 
         Return ONLY a raw JSON object with this exact schema:
         {{
-            "score": 100,
+            "score": 55,
             "paradigm": "STAR Method",
             "time_complexity": "N/A",
             "space_complexity": "N/A",
+            "situation_covered": true,
+            "task_covered": true,
+            "action_covered": false,
+            "result_covered": false,
             "S": true,
             "T": true,
-            "A": true,
-            "R": true
+            "A": false,
+            "R": false
         }}
         """
         try:
@@ -753,11 +816,12 @@ async def extract_teacher_metrics(
                 timeout=15.0,
             )
             data = json.loads(response.text)
-            data["algorithmic_paradigm"] = data.get("paradigm", "STAR Method")
-            return data
+            return _normalize_behavioral_metrics(data)
         except Exception as e:
             print(f"Failed or timed out extracting behavioral teacher metrics: {e}")
-            return {"score": 0, "S": False, "T": False, "A": False, "R": False}
+            return _normalize_behavioral_metrics(
+                {"score": 0, "S": False, "T": False, "A": False, "R": False}
+            )
 
     prompt = f"""
     Evaluate the candidate's final DSA interview session and code against the optimal rubric.

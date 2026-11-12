@@ -21,7 +21,7 @@ def calculate_weakness_score(accuracy, failures, days_since_last_attempt):
     return round(weakness_score, 3)
 
 
-def generate_recommendations(records, top_n=3):
+def generate_recommendations(records, top_n=None):
     """
     Generate skill recommendations from performance records.
 
@@ -36,24 +36,27 @@ def generate_recommendations(records, top_n=3):
     for record in records:
 
         skill = record["skill"]
+        raw_score = float(record.get("score") or 0.0)
+        norm_score = raw_score / 100.0 if raw_score > 1.0 else raw_score
+        norm_score = max(0.0, min(1.0, norm_score))
 
         if skill not in skill_data:
             skill_data[skill] = {
                 "attempts": 0,
-                "total_score": 0,
+                "total_score": 0.0,
                 "failures": 0,
                 "paradigm_errors": 0,
                 "time_errors": 0,
                 "space_errors": 0,
-                "last_attempt": record["created_at"]
+                "last_attempt": record["created_at"],
             }
 
         data = skill_data[skill]
 
         data["attempts"] += 1
-        data["total_score"] += record["score"]
+        data["total_score"] += norm_score
 
-        if record["score"] < 1:
+        if norm_score < 1.0:
             data["failures"] += 1
 
         if record.get("paradigm_correct") is False:
@@ -127,20 +130,26 @@ def generate_recommendations(records, top_n=3):
 
         recommendation = {
             "skill": skill,
+            "attempts": data["attempts"],
             "accuracy": round(accuracy * 100, 1),
             "weak_area": weak_area,
             "priority": priority,
-            "action": action
+            "action": action,
+            "last_attempt": data["last_attempt"].isoformat()
+            if hasattr(data["last_attempt"], "isoformat")
+            else str(data["last_attempt"]),
         }
 
         recommendations.append(recommendation)
 
     # --------------------------------
-    # 5. Sort by priority
+    # 5. Sort by most recent attempt & priority
     # --------------------------------
     recommendations.sort(
-        key=lambda x: x["priority"],
-        reverse=True
+        key=lambda x: (x["priority"], x.get("last_attempt", "")),
+        reverse=True,
     )
 
-    return recommendations[:top_n]
+    if top_n is not None:
+        return recommendations[:top_n]
+    return recommendations

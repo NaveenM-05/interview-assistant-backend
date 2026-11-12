@@ -7,7 +7,7 @@ from recommendation import generate_recommendations
 def get_user_recommendations(
     db: Session,
     user_id: str,
-    top_n: int = 3
+    top_n: int = None
 ):
     records = (
         db.query(PerformanceRecord)

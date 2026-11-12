@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Button from '../components/ui/Button';
 import ScoreRing from '../components/ui/ScoreRing';
 import { USER_ID } from '../config';
-import { getRecommendations } from '../lib/api';
+import { getDashboardData } from '../lib/api';
 
 function StatCard({ icon: Icon, label, value, hint, tone = 'text-cyan' }) {
   return (
@@ -90,7 +90,7 @@ function LoadingGrid() {
 }
 
 export default function Dashboard() {
-  const [recommendations, setRecommendations] = useState([]);
+  const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -98,33 +98,48 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      setRecommendations(await getRecommendations(USER_ID));
+      const data = await getDashboardData(USER_ID);
+      setDashboardData(data);
     } catch (err) {
-      setError(err.message || 'Failed to load recommendations.');
+      setError(err.message || 'Failed to load dashboard data.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Initial fetch (state starts as loading, so no synchronous setState here).
+  // Fetch live aggregated metrics for USER_ID ('test_user_123') on mount
   useEffect(() => {
     let alive = true;
-    getRecommendations(USER_ID)
-      .then((recs) => alive && setRecommendations(recs))
-      .catch((err) => alive && setError(err.message || 'Failed to load recommendations.'))
-      .finally(() => alive && setLoading(false));
+    getDashboardData(USER_ID)
+      .then((data) => {
+        if (alive) setDashboardData(data);
+      })
+      .catch((err) => {
+        if (alive) setError(err.message || 'Failed to load dashboard data.');
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
     return () => {
       alive = false;
     };
   }, []);
 
+  const recommendations = useMemo(() => dashboardData?.recommendations || [], [dashboardData]);
+
   const stats = useMemo(() => {
     if (!recommendations.length) return null;
-    const avg = Math.round(recommendations.reduce((s, r) => s + (Number(r.accuracy) || 0), 0) / recommendations.length);
-    const weakest = [...recommendations].sort((a, b) => a.accuracy - b.accuracy)[0];
-    const topPriority = [...recommendations].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
+    const avg =
+      typeof dashboardData?.average_accuracy === 'number'
+        ? Math.round(dashboardData.average_accuracy)
+        : Math.round(recommendations.reduce((s, r) => s + (Number(r.accuracy) || 0), 0) / recommendations.length);
+    const weakest =
+      dashboardData?.weakest_skill || [...recommendations].sort((a, b) => a.accuracy - b.accuracy)[0];
+    const topPriority =
+      dashboardData?.top_priority_skill ||
+      [...recommendations].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
     return { avg, weakest, topPriority };
-  }, [recommendations]);
+  }, [dashboardData, recommendations]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 sm:py-14">

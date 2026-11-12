@@ -116,8 +116,54 @@ def create_dynamic_question(
 
 
 # ============================================================
-# RECOMMENDATION API
+# DASHBOARD & RECOMMENDATION API
 # ============================================================
+
+
+def _build_dashboard_payload(db: Session, user_id: str) -> dict:
+    recs = get_user_recommendations(
+        db=db,
+        user_id=user_id,
+        top_n=None,
+    )
+    if not recs:
+        return {
+            "user_id": user_id,
+            "average_accuracy": 0,
+            "weakest_skill": None,
+            "top_priority_skill": None,
+            "total_skills": 0,
+            "recommendations": [],
+        }
+
+    avg_acc = round(
+        sum(float(r.get("accuracy") or 0) for r in recs) / len(recs)
+    )
+    weakest = min(
+        recs,
+        key=lambda r: (float(r.get("accuracy") or 0), -(r.get("attempts") or 0)),
+    )
+    top_priority = max(
+        recs,
+        key=lambda r: (float(r.get("priority") or 0), r.get("last_attempt", "")),
+    )
+
+    return {
+        "user_id": user_id,
+        "average_accuracy": avg_acc,
+        "weakest_skill": weakest,
+        "top_priority_skill": top_priority,
+        "total_skills": len(recs),
+        "recommendations": recs,
+    }
+
+
+@app.get("/api/dashboard/{user_id}")
+def get_dashboard(
+    user_id: str,
+    db: Session = Depends(get_db),
+):
+    return _build_dashboard_payload(db=db, user_id=user_id)
 
 
 @app.get("/recommendations/{user_id}")
@@ -125,15 +171,7 @@ def recommendations(
     user_id: str,
     db: Session = Depends(get_db),
 ):
-    result = get_user_recommendations(
-        db=db,
-        user_id=user_id,
-    )
-
-    return {
-        "user_id": user_id,
-        "recommendations": result,
-    }
+    return _build_dashboard_payload(db=db, user_id=user_id)
 
 
 # ============================================================
@@ -294,6 +332,8 @@ async def interview_websocket(
                             score=validation_result["score"],
                         )
                         db.add(performance_record)
+                        db.commit()
+                        db.refresh(performance_record)
 
                         teacher_prompt = validation_result["teacher_feedback"]
                         optimal_code_snippet = validation_result.get(
@@ -415,6 +455,33 @@ async def interview_websocket(
                     t_val_end = time.perf_counter()
 
                     followup_question = validation_result["followup_question"]
+                    is_behavioral_session = (
+                        dynamic_session.optimal_paradigm or ""
+                    ).upper() == "BEHAVIORAL"
+
+                    turn_performance_record = PerformanceRecord(
+                        user_id=user_id,
+                        skill=dynamic_session.topic,
+                        paradigm_correct=(
+                            bool(validation_result.get("S") and validation_result.get("T"))
+                            if is_behavioral_session
+                            else bool(validation_result.get("paradigm_correct"))
+                        ),
+                        time_complexity_correct=(
+                            bool(validation_result.get("A"))
+                            if is_behavioral_session
+                            else bool(validation_result.get("time_complexity_correct"))
+                        ),
+                        space_complexity_correct=(
+                            bool(validation_result.get("R"))
+                            if is_behavioral_session
+                            else bool(validation_result.get("space_complexity_correct"))
+                        ),
+                        score=validation_result["score"],
+                    )
+                    db.add(turn_performance_record)
+                    db.commit()
+                    db.refresh(turn_performance_record)
 
                     # Append user message (with code snapshot) and interviewer follow-up to MessageHistory
                     chat_messages.append(
