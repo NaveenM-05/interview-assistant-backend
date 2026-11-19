@@ -1,10 +1,11 @@
-import { LayoutDashboard, Menu, Mic, X } from 'lucide-react';
+import { LayoutDashboard, Menu, Mic, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import Button from '../ui/Button';
 import Logo from './Logo';
 
 const links = [
+  { to: '/verified', label: 'Warm-up', icon: ShieldCheck },
   { to: '/setup', label: 'Mock interview', icon: Mic },
   { to: '/dashboard', label: 'Feedback dashboard', icon: LayoutDashboard },
 ];

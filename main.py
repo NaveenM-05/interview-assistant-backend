@@ -36,6 +36,7 @@ from validator import (
     validate_final_evaluation,
 )
 from recommendation_service import get_user_recommendations
+from verified_router import router as verified_router  # Verified warm-up
 
 # Ensure all tables (including dynamic_sessions and message_history) exist
 Base.metadata.create_all(bind=engine)
@@ -49,6 +50,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Verified warm-up (rubric-graded explanation before coding); see VERIFIED_WARMUP.md
+app.include_router(verified_router)
 
 
 class GenerateQuestionRequest(BaseModel):

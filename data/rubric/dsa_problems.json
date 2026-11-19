@@ -1,0 +1,261 @@
+{
+  "_note": "Verdict is decided on approach + TIME complexity. Space complexity only affects the 0-10 score. Variables: n = input size; for grids m x n; for graphs V vertices, E edges; for coin change n = amount, m = number of coin types; k as named in the question. Review this rubric with a faculty member before data collection and record that review in the paper.",
+  "problems": [
+    {
+      "id": "two_sum",
+      "title": "Two Sum",
+      "question": "Given an array of integers and a target value, return the indices of the two numbers that add up to the target. Explain your approach and its time and space complexity.",
+      "accepted_paradigms": ["hashing"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(n)"],
+      "acceptable_suboptimal": [
+        {"paradigm": "brute_force", "time": "O(n^2)"},
+        {"paradigm": "sorting", "time": "O(n log n)"},
+        {"paradigm": "two_pointers", "time": "O(n log n)"},
+        {"paradigm": "binary_search", "time": "O(n log n)"}
+      ],
+      "hint": "Could a structure with constant-time lookup remove the inner loop?",
+      "reference_answer": "Use a hash map from value to index. Iterate once; for each element check whether target minus the element is already in the map, and if so return both indices, otherwise store the element. This is O(n) time and O(n) space."
+    },
+    {
+      "id": "valid_parentheses",
+      "title": "Valid Parentheses",
+      "question": "Given a string containing only the characters ( ) { } [ ], determine whether the brackets are balanced. Explain your approach and its complexity.",
+      "accepted_paradigms": ["stack"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(n)"],
+      "acceptable_suboptimal": [{"paradigm": "brute_force", "time": "O(n^2)"}],
+      "incorrect_paradigms": ["sorting"],
+      "hint": "Which data structure naturally matches the most recent unmatched opening bracket?",
+      "reference_answer": "Push every opening bracket onto a stack; on a closing bracket, check that the stack is non-empty and the top is the matching opener, then pop. At the end the stack must be empty. O(n) time, O(n) space."
+    },
+    {
+      "id": "stock_profit",
+      "title": "Best Time to Buy and Sell Stock",
+      "question": "Given daily stock prices, find the maximum profit from one buy followed by one sell. Explain your approach and its complexity.",
+      "accepted_paradigms": ["greedy", "dynamic_programming"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(1)"],
+      "acceptable_suboptimal": [{"paradigm": "brute_force", "time": "O(n^2)"}],
+      "incorrect_paradigms": ["sorting"],
+      "hint": "Can you track the minimum price seen so far in a single pass?",
+      "reference_answer": "Scan once while keeping the minimum price seen so far and the best profit; at each day update profit as price minus minimum. O(n) time, O(1) space."
+    },
+    {
+      "id": "max_subarray",
+      "title": "Maximum Subarray Sum",
+      "question": "Given an integer array, find the contiguous subarray with the largest sum. Explain your approach and its complexity.",
+      "accepted_paradigms": ["dynamic_programming", "greedy"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(1)"],
+      "acceptable_suboptimal": [
+        {"paradigm": "brute_force", "time": "O(n^2)"},
+        {"paradigm": "brute_force", "time": "O(n^3)"},
+        {"paradigm": "divide_and_conquer", "time": "O(n log n)"},
+        {"paradigm": "prefix_sum", "time": "O(n^2)"}
+      ],
+      "incorrect_paradigms": ["sorting"],
+      "hint": "Can you decide at each index whether to extend the current subarray or start a new one?",
+      "reference_answer": "Kadane's algorithm: keep the best sum ending at the current index as max(x, current + x) and track the global maximum. O(n) time, O(1) space."
+    },
+    {
+      "id": "contains_duplicate",
+      "title": "Contains Duplicate",
+      "question": "Given an integer array, return true if any value appears at least twice. Explain your approach and its complexity.",
+      "accepted_paradigms": ["hashing"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(n)"],
+      "acceptable_suboptimal": [
+        {"paradigm": "sorting", "time": "O(n log n)"},
+        {"paradigm": "brute_force", "time": "O(n^2)"}
+      ],
+      "hint": "Can you remember which values you have already seen?",
+      "reference_answer": "Insert elements into a hash set while scanning; if an element is already present, return true. O(n) time and O(n) space. Sorting first gives O(n log n) time."
+    },
+    {
+      "id": "longest_unique_substring",
+      "title": "Longest Substring Without Repeating Characters",
+      "question": "Given a string, find the length of the longest substring without repeating characters. Explain your approach and its complexity.",
+      "accepted_paradigms": ["sliding_window", "two_pointers"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(n)", "O(1)", "O(k)"],
+      "acceptable_suboptimal": [
+        {"paradigm": "brute_force", "time": "O(n^3)"},
+        {"paradigm": "brute_force", "time": "O(n^2)"},
+        {"paradigm": "hashing", "time": "O(n^2)"}
+      ],
+      "hint": "Instead of restarting, can you move the left edge of a window forward when you see a repeat?",
+      "reference_answer": "Sliding window with a hash map of last seen index: extend the right pointer, and when a character repeats move the left pointer past its previous occurrence; track the maximum window length. O(n) time, O(min(n, alphabet)) space."
+    },
+    {
+      "id": "search_sorted",
+      "title": "Search in a Sorted Array",
+      "question": "Given a sorted array and a target, return the index of the target or -1. Explain your approach and its complexity.",
+      "accepted_paradigms": ["binary_search"],
+      "optimal_time": ["O(log n)"],
+      "optimal_space": ["O(1)"],
+      "acceptable_suboptimal": [{"paradigm": "brute_force", "time": "O(n)"}],
+      "hint": "The array is sorted - can you discard half of it at each step?",
+      "reference_answer": "Binary search: compare the target with the middle element and discard the half that cannot contain it. O(log n) time, O(1) space."
+    },
+    {
+      "id": "merge_intervals",
+      "title": "Merge Overlapping Intervals",
+      "question": "Given a list of intervals, merge all overlapping intervals. Explain your approach and its complexity.",
+      "accepted_paradigms": ["sorting"],
+      "optimal_time": ["O(n log n)"],
+      "optimal_space": ["O(n)"],
+      "acceptable_suboptimal": [{"paradigm": "brute_force", "time": "O(n^2)"}],
+      "hint": "What happens if the intervals are processed in order of their start time?",
+      "reference_answer": "Sort intervals by start, then scan, merging the current interval into the last output interval if they overlap, otherwise appending it. O(n log n) time, O(n) space for the output."
+    },
+    {
+      "id": "kth_largest",
+      "title": "Kth Largest Element",
+      "question": "Given an unsorted array and an integer k, find the kth largest element. Explain your approach and its complexity.",
+      "accepted_paradigms": ["heap", "divide_and_conquer"],
+      "optimal_time": ["O(n log k)", "O(n)"],
+      "optimal_space": ["O(k)", "O(1)"],
+      "acceptable_suboptimal": [
+        {"paradigm": "sorting", "time": "O(n log n)"},
+        {"paradigm": "brute_force", "time": "O(n k)"}
+      ],
+      "hint": "Do you need to fully sort the array, or only keep track of the k largest values?",
+      "reference_answer": "Keep a min-heap of size k: push each element and pop when the heap exceeds k; the top is the answer. O(n log k) time, O(k) space. Quickselect gives O(n) average time."
+    },
+    {
+      "id": "number_of_islands",
+      "title": "Number of Islands",
+      "question": "Given an m by n grid of land and water cells, count the number of islands. Explain your approach and its complexity.",
+      "accepted_paradigms": ["dfs", "bfs", "union_find"],
+      "optimal_time": ["O(n m)"],
+      "optimal_space": ["O(n m)"],
+      "acceptable_suboptimal": [],
+      "hint": "When you find a land cell, how could you mark the whole island as visited?",
+      "reference_answer": "Scan the grid; on each unvisited land cell increment the count and flood-fill the island with DFS or BFS, marking cells visited. Every cell is visited once: O(m n) time, O(m n) space in the worst case."
+    },
+    {
+      "id": "climbing_stairs",
+      "title": "Climbing Stairs",
+      "question": "You can climb 1 or 2 steps at a time. In how many distinct ways can you reach step n? Explain your approach and its complexity.",
+      "accepted_paradigms": ["dynamic_programming"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(1)", "O(n)"],
+      "acceptable_suboptimal": [
+        {"paradigm": "recursion", "time": "O(2^n)"},
+        {"paradigm": "backtracking", "time": "O(2^n)"}
+      ],
+      "hint": "Are you recomputing the same sub-problems? Could you store them?",
+      "reference_answer": "ways(n) = ways(n-1) + ways(n-2); compute bottom-up keeping only the last two values. O(n) time, O(1) space. Plain recursion without memoization is O(2^n)."
+    },
+    {
+      "id": "reverse_linked_list",
+      "title": "Reverse a Linked List",
+      "question": "Reverse a singly linked list. Explain your approach and its complexity.",
+      "accepted_paradigms": ["linked_list_pointers", "recursion"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(1)"],
+      "acceptable_suboptimal": [{"paradigm": "stack", "time": "O(n)"}],
+      "hint": "Can you re-point each node's next pointer as you walk the list, using O(1) extra space?",
+      "reference_answer": "Iterate with prev, curr and next pointers, setting curr.next to prev at each step. O(n) time, O(1) space. The recursive version uses O(n) stack space."
+    },
+    {
+      "id": "linked_list_cycle",
+      "title": "Detect a Cycle in a Linked List",
+      "question": "Determine whether a linked list contains a cycle. Explain your approach and its complexity.",
+      "accepted_paradigms": ["linked_list_pointers", "hashing"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(1)"],
+      "acceptable_suboptimal": [],
+      "hint": "Can you detect the cycle without storing visited nodes?",
+      "reference_answer": "Floyd's tortoise and hare: move one pointer by one and another by two; they meet if and only if there is a cycle. O(n) time, O(1) space. A hash set of visited nodes is O(n) time and O(n) space."
+    },
+    {
+      "id": "level_order",
+      "title": "Binary Tree Level Order Traversal",
+      "question": "Return the values of a binary tree level by level. Explain your approach and its complexity.",
+      "accepted_paradigms": ["bfs", "queue", "dfs"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(n)"],
+      "acceptable_suboptimal": [],
+      "hint": "Which data structure processes nodes in the order they were discovered?",
+      "reference_answer": "BFS with a queue: process the queue one level at a time, appending children for the next level. Every node is visited once: O(n) time, O(n) space."
+    },
+    {
+      "id": "course_schedule",
+      "title": "Course Schedule",
+      "question": "Given courses and prerequisite pairs, decide whether all courses can be finished. Explain your approach and its complexity.",
+      "accepted_paradigms": ["topological_sort", "dfs", "bfs"],
+      "optimal_time": ["O(V + E)"],
+      "optimal_space": ["O(V + E)"],
+      "acceptable_suboptimal": [],
+      "incorrect_paradigms": ["greedy", "sorting"],
+      "hint": "This is cycle detection in a directed graph - how would you find a valid ordering?",
+      "reference_answer": "Build the prerequisite graph and run Kahn's algorithm (BFS on in-degree zero nodes) or DFS with three colours to detect a cycle; finishable iff there is no cycle. O(V + E) time and space."
+    },
+    {
+      "id": "network_delay",
+      "title": "Network Delay Time",
+      "question": "Given a weighted directed graph with non-negative edge weights and a source node, find the time for a signal to reach all nodes. Explain your approach and its complexity.",
+      "accepted_paradigms": ["shortest_path", "heap"],
+      "optimal_time": ["O(E log V)"],
+      "optimal_space": ["O(V + E)"],
+      "acceptable_suboptimal": [],
+      "incorrect_paradigms": ["bfs"],
+      "hint": "Edges have different weights - which shortest-path algorithm handles that efficiently?",
+      "reference_answer": "Dijkstra's algorithm with a min-heap from the source; the answer is the maximum shortest distance, or -1 if some node is unreachable. O(E log V) time, O(V + E) space."
+    },
+    {
+      "id": "coin_change",
+      "title": "Coin Change (Minimum Coins)",
+      "question": "Given coin denominations and an amount, find the minimum number of coins needed to make the amount. Use n for the amount and m for the number of coin types. Explain your approach and its complexity.",
+      "accepted_paradigms": ["dynamic_programming", "bfs"],
+      "optimal_time": ["O(n m)"],
+      "optimal_space": ["O(n)"],
+      "acceptable_suboptimal": [
+        {"paradigm": "recursion", "time": "O(m^n)"},
+        {"paradigm": "backtracking", "time": "O(m^n)"}
+      ],
+      "incorrect_paradigms": ["greedy"],
+      "hint": "Greedy fails for some coin systems; can you build the answer for every amount from 0 up to n?",
+      "reference_answer": "Bottom-up DP: dp[0] = 0 and dp[a] = 1 + min(dp[a - c]) over coins c; answer dp[n]. O(n m) time and O(n) space. Greedy is incorrect for arbitrary denominations."
+    },
+    {
+      "id": "product_except_self",
+      "title": "Product of Array Except Self",
+      "question": "Return an array where each element is the product of all other elements, without using division. Explain your approach and its complexity.",
+      "accepted_paradigms": ["prefix_sum"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(1)", "O(n)"],
+      "acceptable_suboptimal": [{"paradigm": "brute_force", "time": "O(n^2)"}],
+      "hint": "Can you combine a running product from the left with one from the right?",
+      "reference_answer": "Compute prefix products from the left into the output, then multiply by a running suffix product from the right. O(n) time and O(1) extra space besides the output."
+    },
+    {
+      "id": "trapping_rain_water",
+      "title": "Trapping Rain Water",
+      "question": "Given bar heights, compute how much water is trapped after rain. Explain your approach and its complexity.",
+      "accepted_paradigms": ["two_pointers", "prefix_sum", "monotonic_stack", "dynamic_programming"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(1)", "O(n)"],
+      "acceptable_suboptimal": [{"paradigm": "brute_force", "time": "O(n^2)"}],
+      "hint": "The water above a bar depends on the tallest bar to its left and right - can you precompute or track those?",
+      "reference_answer": "Two pointers from both ends while tracking left-max and right-max; move the side with the smaller max and add max minus height. O(n) time, O(1) space."
+    },
+    {
+      "id": "sliding_window_max",
+      "title": "Sliding Window Maximum",
+      "question": "Given an array and window size k, return the maximum of every window of size k. Explain your approach and its complexity.",
+      "accepted_paradigms": ["queue", "monotonic_stack", "sliding_window"],
+      "optimal_time": ["O(n)"],
+      "optimal_space": ["O(k)"],
+      "acceptable_suboptimal": [
+        {"paradigm": "heap", "time": "O(n log k)"},
+        {"paradigm": "heap", "time": "O(n log n)"},
+        {"paradigm": "brute_force", "time": "O(n k)"}
+      ],
+      "hint": "Can you keep a deque of candidate indices whose values are decreasing?",
+      "reference_answer": "Keep a deque of indices with decreasing values; drop indices that leave the window from the front and smaller values from the back; the front is the window maximum. O(n) time, O(k) space."
+    }
+  ]
+}

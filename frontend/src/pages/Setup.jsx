@@ -1,8 +1,10 @@
-import { AlertCircle, ArrowRight, Braces, Loader2, MessagesSquare } from 'lucide-react';
+import { AlertCircle, ArrowRight, Braces, Loader2, Lock, MessagesSquare } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Button from '../components/ui/Button';
+import TopicGate from '../components/verified/TopicGate';
+import { useTopicGate } from '../hooks/useTopicGate';
 import { useSession } from '../context/session';
 import { generateQuestion } from '../lib/api';
 import { BEHAVIORAL_TOPICS, DIFFICULTIES, DSA_TOPICS, starterCode } from '../lib/topics';
@@ -36,15 +38,20 @@ export default function Setup() {
   const navigate = useNavigate();
   const reduce = useReducedMotion();
   const { session, startSession } = useSession();
+  // Verified warm-up gate: /setup?topic=X preselects X; locked DSA topics need a warm-up first.
+  const [searchParams] = useSearchParams();
+  const topicFromUrl = DSA_TOPICS.includes(searchParams.get('topic')) ? searchParams.get('topic') : null;
+  const gate = useTopicGate();
 
-  const [interviewType, setInterviewType] = useState(session?.interviewType ?? 'DSA');
-  const [topic, setTopic] = useState(session?.topic ?? DSA_TOPICS[0]);
+  const [interviewType, setInterviewType] = useState(topicFromUrl ? 'DSA' : (session?.interviewType ?? 'DSA'));
+  const [topic, setTopic] = useState(topicFromUrl ?? session?.topic ?? DSA_TOPICS[0]);
   const [difficulty, setDifficulty] = useState(session?.difficulty ?? 'Medium');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState(null);
 
   const isBehavioral = interviewType === 'BEHAVIORAL';
   const topics = isBehavioral ? BEHAVIORAL_TOPICS : DSA_TOPICS;
+  const isLocked = !isBehavioral && (gate.loading || gate.isLocked(topic));
 
   const chooseType = (type) => {
     setInterviewType(type);
@@ -52,6 +59,7 @@ export default function Setup() {
   };
 
   const generate = async () => {
+    if (isLocked) return;
     setIsGenerating(true);
     setError(null);
     try {
@@ -139,6 +147,12 @@ export default function Setup() {
                   }`}
                 >
                   {t}
+                  {!isBehavioral && gate.isLocked(t) && (
+                    <>
+                      <Lock size={12} className="-mt-0.5 ml-1.5 inline" aria-hidden="true" />
+                      <span className="sr-only"> (locked)</span>
+                    </>
+                  )}
                 </button>
               );
             })}
@@ -181,6 +195,8 @@ export default function Setup() {
           </section>
         )}
 
+        {!isBehavioral && <TopicGate topic={topic} gate={gate} />}
+
         {error && (
           <div
             role="alert"
@@ -196,7 +212,7 @@ export default function Setup() {
             <span className="text-soft">{isBehavioral ? 'Behavioral' : 'DSA'}</span>, {topic}
             {!isBehavioral && `, ${difficulty}`}
           </p>
-          <Button size="lg" onClick={generate} disabled={isGenerating}>
+          <Button size="lg" onClick={generate} disabled={isGenerating || isLocked}>
             {isGenerating ? (
               <>
                 <Loader2 size={18} className="animate-spin" aria-hidden="true" />

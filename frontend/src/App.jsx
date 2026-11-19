@@ -4,6 +4,7 @@ import AppShell from './components/layout/AppShell';
 import Landing from './pages/Landing';
 import Setup from './pages/Setup';
 import Dashboard from './pages/Dashboard';
+import VerifiedPractice from './pages/VerifiedPractice';
 
 // The interview room pulls in Monaco, so load it only when needed.
 const InterviewRoom = lazy(() => import('./pages/InterviewRoom'));
@@ -35,6 +36,7 @@ export default function App() {
             </Suspense>
           }
         />
+        <Route path="verified" element={<VerifiedPractice />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
